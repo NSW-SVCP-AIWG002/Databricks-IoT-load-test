@@ -1,0 +1,100 @@
+version: "3.9"
+
+# -------------------------------------------------------
+# Locust 疎通検証用 2 worker 構成（200台）
+#
+# 用途:
+#   2 worker × 100台 = 200台で Event Hubs への疎通確認を行う
+#   silver_pipeline.py（Databricks）が起動済みであること。
+#   Event Hub 経由で Delta Lake（ADLS）への書き込みを確認する。
+#
+# 構成:
+#   master   : Web UI / ワーカー統括
+#   worker-1 : device_id   1〜100
+#   worker-2 : device_id 101〜200
+#   合計     : IoT 200台
+#
+# 事前準備:
+#   device.create.txt の [A] を実行して device_master に 200台分を登録すること
+#
+# 起動:
+#   docker compose -f docker-compose.double.yml up --build
+#   → ブラウザで http://localhost:8089 を開き
+#     Users=201, Spawn rate=10 でテスト開始
+#     (KafkaDeviceUser×200 + EventHubConsumerUser×1)
+#
+# ヘッドレスで即時実行する場合:
+#   docker compose -f docker-compose.double.yml run --rm \
+#     master --headless -u 201 -r 10 --run-time 5m
+#
+# 停止:
+#   docker compose -f docker-compose.double.yml down
+#
+# 統計 CSV 出力先: ./output/locust_statistics*.csv
+# -------------------------------------------------------
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: iotbricks-locust:latest
+  env_file:
+    - .env
+  command:
+    - --worker
+    - --master-host=master
+    - -f
+    - locustfile.py
+  depends_on:
+    - master
+  networks:
+    - locust-net
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iotbricks-locust:latest
+    container_name: locust-double-master
+    ports:
+      - "8089:8089"   # Locust Web UI
+      - "5557:5557"   # Worker communication
+    env_file:
+      - .env
+    command:
+      - --master
+      - --host=${TARGET_HOST:-http://localhost}
+      - --web-host=0.0.0.0
+      - -f
+      - locustfile.py
+      - --csv=output/locust_statistics
+      - --csv-full-history
+      - --logfile=output/locust.log
+    volumes:
+      - ./device_credentials.csv:/loadtest/device_credentials.csv:ro
+      - ./output:/loadtest/output
+    networks:
+      - locust-net
+
+  worker-1:
+    <<: *worker-base
+    container_name: locust-double-worker-1
+    environment:
+      DEVICE_COUNT: 100
+      DEVICE_ID_OFFSET: 1       # device_id 1〜100
+
+  worker-2:
+    <<: *worker-base
+    container_name: locust-double-worker-2
+    environment:
+      DEVICE_COUNT: 100
+      DEVICE_ID_OFFSET: 101     # device_id 101〜200
+
+networks:
+  locust-net:
+    driver: bridge

@@ -1,0 +1,57 @@
+version: "3.9"
+
+# -------------------------------------------------------
+# Locust 疎通検証用 単一コンテナ構成
+#
+# 用途:
+#   1コンテナ1デバイスで Event Hubs への疎通確認を行う
+#   （分散なし・スタンドアロンモード）
+#
+#   silver_pipeline.py（Databricks）が起動済みであること。
+#   Event Hub にデータが届いた後、Databricks が Delta Lake（ADLS）へ書き込む。
+#
+# 構成:
+#   locust-single : KafkaDeviceUser（device_id=1）+ EventHubConsumerUser
+#   合計          : IoT 1台
+#
+# 起動:
+#   docker compose -f docker-compose.single.yml up --build
+#   → ブラウザで http://localhost:8089 を開き
+#     Users=2, Spawn rate=1 でテスト開始
+#     (KafkaDeviceUser×1 + EventHubConsumerUser×1)
+#
+# ヘッドレスで即時実行する場合:
+#   docker compose -f docker-compose.single.yml run --rm \
+#     locust-single --headless -u 2 -r 1 --run-time 2m
+#
+# 停止:
+#   docker compose -f docker-compose.single.yml down
+#
+# 統計 CSV 出力先: ./output/locust_statistics*.csv
+# -------------------------------------------------------
+
+services:
+  locust-single:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iotbricks-locust:latest
+    container_name: locust-single
+    ports:
+      - "8089:8089"
+    env_file:
+      - .env
+    environment:
+      DEVICE_COUNT: 1           # IoT デバイス 1台のみ
+      DEVICE_ID_OFFSET: 1       # device_id=1
+    command:
+      - -f
+      - locustfile.py
+      - --host=${TARGET_HOST:-http://localhost}
+      - --web-host=0.0.0.0
+      - --csv=output/locust_statistics
+      - --csv-full-history
+      - --logfile=output/locust.log
+    volumes:
+      - ./device_credentials.csv:/loadtest/device_credentials.csv:ro
+      - ./output:/loadtest/output

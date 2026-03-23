@@ -1,0 +1,128 @@
+-- ============================================================
+-- device_master 一括INSERT文
+-- ============================================================
+--
+-- 用途:
+--   負荷検証用デバイスを device_master に登録する。
+--   FK 参照先（organization_id, device_type_id, device_stock_id）および
+--   device_model, creator, modifier は既存の device_id=1 のレコードを参照する。
+--
+-- 実行前提:
+--   - device_id=1 が既に登録済みであること
+--   - device_id=2 が既に登録済みであること
+--   - 再帰 CTE を使用するため MySQL 8.0 以上が必要
+--
+-- ============================================================
+
+
+-- ============================================================
+-- [A] 疎通検証用：200台分（device_id 3〜200）
+--     docker-compose.double.yml 用
+-- ============================================================
+
+SET SESSION cte_max_recursion_depth = 20000;
+
+INSERT INTO device_master (
+    device_uuid,
+    device_name,
+    device_model,
+    organization_id,
+    device_type_id,
+    device_stock_id,
+    mac_address,
+    creator,
+    modifier,
+    create_date,
+    update_date,
+    delete_flag
+)
+WITH RECURSIVE seq(n) AS (
+    SELECT 3
+    UNION ALL
+    SELECT n + 1 FROM seq WHERE n < 200
+),
+base AS (
+    SELECT organization_id, device_type_id, device_stock_id, device_model, creator, modifier
+    FROM device_master
+    WHERE device_id = 1
+)
+SELECT
+    UUID()                                       AS device_uuid,
+    CONCAT('loadtest-device-', LPAD(n, 5, '0')) AS device_name,
+    base.device_model,
+    base.organization_id,
+    base.device_type_id,
+    base.device_stock_id,
+    NULL                                         AS mac_address,
+    base.creator,
+    base.modifier,
+    NOW()                                        AS create_date,
+    NOW()                                        AS update_date,
+    0                                            AS delete_flag
+FROM seq, base;
+
+-- 登録件数確認
+-- SELECT COUNT(*) FROM device_master;   -- 200 になること
+
+
+-- ============================================================
+-- [B] 本番負荷検証用：20,000台分（device_id 3〜20,000）
+--     docker-compose.yml（20 worker 構成）用
+--
+-- ※ [A] を実行済みの場合は既に device_id 3〜200 が登録されているため、
+--    このセクションでは 201〜20,000 を追加登録する。
+--    [A] を実行していない場合は下記の範囲を 3〜20000 に変更して実行すること。
+-- ============================================================
+
+SET SESSION cte_max_recursion_depth = 20000;
+
+INSERT INTO device_master (
+    device_uuid,
+    device_name,
+    device_model,
+    organization_id,
+    device_type_id,
+    device_stock_id,
+    mac_address,
+    creator,
+    modifier,
+    create_date,
+    update_date,
+    delete_flag
+)
+WITH RECURSIVE seq(n) AS (
+    SELECT 201
+    UNION ALL
+    SELECT n + 1 FROM seq WHERE n < 20000
+),
+base AS (
+    SELECT organization_id, device_type_id, device_stock_id, device_model, creator, modifier
+    FROM device_master
+    WHERE device_id = 1
+)
+SELECT
+    UUID()                                       AS device_uuid,
+    CONCAT('loadtest-device-', LPAD(n, 5, '0')) AS device_name,
+    base.device_model,
+    base.organization_id,
+    base.device_type_id,
+    base.device_stock_id,
+    NULL                                         AS mac_address,
+    base.creator,
+    base.modifier,
+    NOW()                                        AS create_date,
+    NOW()                                        AS update_date,
+    0                                            AS delete_flag
+FROM seq, base;
+
+-- 登録件数確認
+-- SELECT COUNT(*) FROM device_master;   -- 20,000 になること
+
+
+-- ============================================================
+-- [C] クリーンアップ（必要な場合のみ）
+--     loadtest-device- で始まるレコードを削除する
+-- ============================================================
+
+-- DELETE FROM device_master
+-- WHERE device_name LIKE 'loadtest-device-%';

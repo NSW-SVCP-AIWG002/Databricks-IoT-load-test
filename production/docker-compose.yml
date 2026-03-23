@@ -1,0 +1,230 @@
+version: "3.9"
+
+# -------------------------------------------------------
+# Locust 分散負荷テスト構成（20,000台構成）
+#
+# 構成:
+#   master     : Web UI / ワーカー統括
+#   worker-1   : device_id    1〜 1000
+#   worker-2   : device_id 1001〜 2000
+#   ...
+#   worker-20  : device_id 19001〜20000
+#   合計       : IoT 20,000台（1 worker × 1000台 × 20 worker）
+#
+# 事前準備:
+#   device.create.txt の [A][B] を順に実行して
+#   device_master に 20,000台分を登録すること
+#
+#   silver_pipeline.py（Databricks）が起動済みであること。
+#   Event Hub 経由で Delta Lake（ADLS）への書き込みを確認する。
+#
+# 起動（全20 worker）:
+#   docker compose up --build
+#   → ブラウザで http://localhost:8089 を開き
+#     Users=20001, Spawn rate=200 でテスト開始
+#     (KafkaDeviceUser×20000 + EventHubConsumerUser×1)
+#
+# 段階的な起動（workerを絞る場合）:
+#   docker compose up --build master worker-1 worker-2
+#   → Users=2001, Spawn rate=50 でテスト開始
+#
+# 停止:
+#   docker compose down
+#
+# 統計 CSV 出力先: ./output/locust_statistics*.csv
+# 環境変数は .env ファイルで設定してください
+# -------------------------------------------------------
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: iotbricks-locust:latest
+  env_file:
+    - .env
+  environment:
+    DEVICE_COUNT: 1000
+  command:
+    - --worker
+    - --master-host=master
+    - -f
+    - locustfile.py
+  depends_on:
+    - master
+  networks:
+    - locust-net
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iotbricks-locust:latest
+    container_name: locust-master
+    ports:
+      - "8089:8089"   # Locust Web UI
+      - "5557:5557"   # Worker communication
+    env_file:
+      - .env
+    command:
+      - --master
+      - --host=${TARGET_HOST:-http://localhost}
+      - --web-host=0.0.0.0
+      - -f
+      - locustfile.py
+      - --csv=output/locust_statistics
+      - --csv-full-history
+      - --logfile=output/locust.log
+    volumes:
+      - ./device_credentials.csv:/loadtest/device_credentials.csv:ro
+      - ./output:/loadtest/output
+    networks:
+      - locust-net
+
+  worker-1:
+    <<: *worker-base
+    container_name: locust-worker-1
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 1
+
+  worker-2:
+    <<: *worker-base
+    container_name: locust-worker-2
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 1001
+
+  worker-3:
+    <<: *worker-base
+    container_name: locust-worker-3
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 2001
+
+  worker-4:
+    <<: *worker-base
+    container_name: locust-worker-4
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 3001
+
+  worker-5:
+    <<: *worker-base
+    container_name: locust-worker-5
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 4001
+
+  worker-6:
+    <<: *worker-base
+    container_name: locust-worker-6
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 5001
+
+  worker-7:
+    <<: *worker-base
+    container_name: locust-worker-7
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 6001
+
+  worker-8:
+    <<: *worker-base
+    container_name: locust-worker-8
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 7001
+
+  worker-9:
+    <<: *worker-base
+    container_name: locust-worker-9
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 8001
+
+  worker-10:
+    <<: *worker-base
+    container_name: locust-worker-10
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 9001
+
+  worker-11:
+    <<: *worker-base
+    container_name: locust-worker-11
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 10001
+
+  worker-12:
+    <<: *worker-base
+    container_name: locust-worker-12
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 11001
+
+  worker-13:
+    <<: *worker-base
+    container_name: locust-worker-13
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 12001
+
+  worker-14:
+    <<: *worker-base
+    container_name: locust-worker-14
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 13001
+
+  worker-15:
+    <<: *worker-base
+    container_name: locust-worker-15
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 14001
+
+  worker-16:
+    <<: *worker-base
+    container_name: locust-worker-16
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 15001
+
+  worker-17:
+    <<: *worker-base
+    container_name: locust-worker-17
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 16001
+
+  worker-18:
+    <<: *worker-base
+    container_name: locust-worker-18
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 17001
+
+  worker-19:
+    <<: *worker-base
+    container_name: locust-worker-19
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 18001
+
+  worker-20:
+    <<: *worker-base
+    container_name: locust-worker-20
+    environment:
+      DEVICE_COUNT: 1000
+      DEVICE_ID_OFFSET: 19001
+
+networks:
+  locust-net:
+    driver: bridge

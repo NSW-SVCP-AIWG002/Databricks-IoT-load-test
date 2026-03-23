@@ -1,0 +1,17 @@
+# 秘密情報・認証情報
+.env
+device_credentials.csv
+
+# Locust 出力
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,26 @@
+# Load testing framework
+locust>=2.20.0
+
+# MQTT クライアント（IoT Hub 経由送信）
+# 参考資料と同様 paho-mqtt 1.x API を使用（2.x は API 変更あり）
+paho-mqtt>=1.6.1,<2.0
+
+# Azure Event Hub SDK（Event Hub コンシューマー・スループット確認用）
+azure-eventhub>=5.11.6
+
+# Azure 認証（register_devices.py のサービスプリンシパル認証 / ADLSDeviceUser 使用時）
+azure-identity>=1.15.0
+
+# HTTP クライアント（register_devices.py の IoT Hub REST API 呼び出し用）
+requests>=2.31.0
+
+# Azure Data Lake Storage Gen2（ADLSDeviceUser 使用時のみ）
+azure-storage-file-datalake>=12.14.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# ---------------------------------------------------------------------------
+# 旧シナリオ（IoT Hub バイパス・Kafka 直接送信）使用時に追加:
+# ---------------------------------------------------------------------------
+# confluent-kafka>=2.3.0
