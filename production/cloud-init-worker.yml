@@ -1,0 +1,65 @@
+#cloud-config
+# -------------------------------------------------------
+# Locust Worker VM 自動セットアップ
+#
+# 用途:
+#   Azure VM 作成時の「カスタムデータ」に貼り付けて使用する
+#   Docker インストール・リポジトリ取得・環境構築を自動化
+#
+# 使い方:
+#   Azure Portal → VM 作成 → 詳細タブ → カスタムデータ
+#   このファイルの内容をそのまま貼り付ける
+#
+# 注意:
+#   DEVICE_ID_OFFSET は worker ごとに変更すること
+#     worker-1:  DEVICE_ID_OFFSET=1
+#     worker-2:  DEVICE_ID_OFFSET=1001
+#     worker-3:  DEVICE_ID_OFFSET=2001
+#     ...
+#     worker-20: DEVICE_ID_OFFSET=19001
+#   MASTER_HOST は locust-master VM のプライベート IP に変更すること
+# -------------------------------------------------------
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - docker.io
+  - docker-compose
+  - python3-pip
+  - curl
+  - unzip
+
+runcmd:
+  # Docker 起動・自動起動設定
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker azureuser
+
+  # リポジトリ取得
+  - curl -L https://github.com/NSW-SVCP-AIWG002/Databricks-IoT-load-test/archive/refs/heads/main.zip -o /tmp/repo.zip
+  - unzip /tmp/repo.zip -d /tmp/
+  - mv /tmp/Databricks-IoT-load-test-main/production /home/azureuser/production
+  - chown -R azureuser:azureuser /home/azureuser/production
+  - mkdir -p /home/azureuser/production/output
+
+  # .env ファイル作成
+  - |
+    cat > /home/azureuser/production/.env << 'EOF'
+    TARGET_HOST=http://localhost
+    IOTHUB_HOSTNAME=<YOUR_IOTHUB_HOSTNAME>
+    AZURE_TENANT_ID=<YOUR_AZURE_TENANT_ID>
+    AZURE_CLIENT_ID=<YOUR_AZURE_CLIENT_ID>
+    AZURE_CLIENT_SECRET=<YOUR_AZURE_CLIENT_SECRET>
+    EVENTHUB_CONNECTION_STRING=<YOUR_EVENTHUB_CONNECTION_STRING>
+    EVENTHUB_NAME=eh-telemetry
+    EOF
+  - chown azureuser:azureuser /home/azureuser/production/.env
+
+  # デバイス認証情報生成（python3 仮想環境）
+  - python3 -m venv /home/azureuser/venv
+  - /home/azureuser/venv/bin/pip install -r /home/azureuser/production/requirements.txt
+  - chown -R azureuser:azureuser /home/azureuser/venv
+
+  # 完了ログ
+  - echo "cloud-init setup completed" >> /var/log/locust-setup.log
