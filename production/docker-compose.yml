@@ -49,8 +49,6 @@ x-worker-base: &worker-base
     - --master-host=master
     - -f
     - locustfile.py
-  depends_on:
-    - master
   networks:
     - locust-net
   volumes:
