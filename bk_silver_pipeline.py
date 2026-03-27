@@ -265,6 +265,7 @@ def process_sensor_batch(batch_df, batch_id):
             "fan_motor_3", "fan_motor_4", "fan_motor_5",
             "defrost_heater_output_1", "defrost_heater_output_2",
         ]],
+        F.col("raw_json").alias("sensor_data_json"),
     )
     print(f"[BATCH {batch_id}] STEP5a-2: MySQL用 DataFrame 生成完了")
 
@@ -292,13 +293,13 @@ def process_sensor_batch(batch_df, batch_id):
                             compressor_freezer_2, fan_motor_1, fan_motor_2,
                             fan_motor_3, fan_motor_4, fan_motor_5,
                             defrost_heater_output_1, defrost_heater_output_2,
-                            create_time
+                            sensor_data_json, create_time
                         ) VALUES (
                             %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, NOW(6)
+                            %s, %s, %s, NOW(6)
                         )
                     """, [
                         (
@@ -314,6 +315,7 @@ def process_sensor_batch(batch_df, batch_id):
                             r["compressor_freezer_2"], r["fan_motor_1"], r["fan_motor_2"],
                             r["fan_motor_3"], r["fan_motor_4"], r["fan_motor_5"],
                             r["defrost_heater_output_1"], r["defrost_heater_output_2"],
+                            r["sensor_data_json"],
                         )
                         for r in mysql_records
                     ])

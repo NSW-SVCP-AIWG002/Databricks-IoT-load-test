@@ -245,6 +245,8 @@ class MqttDeviceUser(User):
             tls_version=ssl.PROTOCOL_TLS_CLIENT,
         )
 
+        self._mqtt._connect_timeout = 30  # デフォルト5秒 → 30秒に延長
+
         try:
             self._mqtt.connect(iothub_hostname, port=8883, keepalive=120)
             self._mqtt.loop_start()
@@ -269,6 +271,24 @@ class MqttDeviceUser(User):
             self._first_send = False
 
         body = json.dumps(_make_telemetry(self.device_id)).encode("utf-8")
+
+        # 接続が切れている場合は再接続を試みる
+        if not self._mqtt.is_connected():
+            try:
+                self._mqtt.reconnect()
+                self._mqtt.loop_start()
+                print(f"[MQTT] 再接続成功 device={self.device_name}")
+            except Exception as reconnect_exc:
+                print(f"[MQTT] 再接続失敗 device={self.device_name}: {reconnect_exc}")
+                self.environment.events.request.fire(
+                    request_type="MQTT",
+                    name="send_telemetry",
+                    response_time=0,
+                    response_length=0,
+                    exception=reconnect_exc,
+                    context=self.context(),
+                )
+                return
 
         start = time.perf_counter()
         try:
