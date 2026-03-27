@@ -199,14 +199,11 @@ class MqttDeviceUser(User):
       DEVICE_CREDENTIALS_FILE   - デバイス認証情報 CSV パス（デフォルト: device_credentials.csv）
     """
 
-    # 2回目以降は5分間隔で送信
+    # 初回送信後は5分間隔で送信
     wait_time = between(300, 300)
 
     def on_start(self):
         _registration_done.wait()  # 認証情報読込完了まで待機
-        # 起動後5分以内のランダムなタイミングで初回送信
-        self._first_send = True
-        self._initial_wait = random.uniform(0, 300)
 
         try:
             cred = _credential_queue.get_nowait()
@@ -265,11 +262,6 @@ class MqttDeviceUser(User):
 
     @task
     def send_telemetry(self):
-        # 初回のみ: 起動後0〜5分のランダムなタイミングまで待機
-        if self._first_send:
-            time.sleep(self._initial_wait)
-            self._first_send = False
-
         body = json.dumps(_make_telemetry(self.device_id)).encode("utf-8")
 
         # 接続が切れている場合は再接続を試みる
