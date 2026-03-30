@@ -244,12 +244,19 @@ class MqttDeviceUser(User):
 
         self._mqtt._connect_timeout = 30  # デフォルト5秒 → 30秒に延長
 
-        try:
-            self._mqtt.connect(iothub_hostname, port=8883, keepalive=120)
-            self._mqtt.loop_start()
-            print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id})")
-        except Exception as e:
-            raise RuntimeError(f"[MQTT] 接続失敗 {self.device_name}: {e}") from e
+        max_retries = 10
+        retry_wait = 5  # 秒
+        for attempt in range(1, max_retries + 1):
+            try:
+                self._mqtt.connect(iothub_hostname, port=8883, keepalive=120)
+                self._mqtt.loop_start()
+                print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
+                break
+            except Exception as e:
+                print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}/{max_retries}: {e}")
+                if attempt == max_retries:
+                    raise RuntimeError(f"[MQTT] 接続失敗（{max_retries}回リトライ後）{self.device_name}: {e}") from e
+                time.sleep(retry_wait * attempt)  # 5秒 → 10秒 → 15秒と段階的に待機
 
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
