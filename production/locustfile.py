@@ -275,22 +275,30 @@ class MqttDeviceUser(User):
         body = json.dumps(_make_telemetry(self.device_id)).encode("utf-8")
 
         # 接続が切れている場合は再接続を試みる
+        # keepalive 維持のため loop を実行
+        self._mqtt.loop(timeout=0.1)
+
         if not self._mqtt.is_connected():
-            try:
-                self._mqtt.reconnect()
-                self._mqtt.loop_start()
-                print(f"[MQTT] 再接続成功 device={self.device_name}")
-            except Exception as reconnect_exc:
-                print(f"[MQTT] 再接続失敗 device={self.device_name}: {reconnect_exc}")
-                self.environment.events.request.fire(
-                    request_type="MQTT",
-                    name="send_telemetry",
-                    response_time=0,
-                    response_length=0,
-                    exception=reconnect_exc,
-                    context=self.context(),
-                )
-                return
+            print(f"[MQTT] 切断検知 device={self.device_name} → 再接続試行")
+            for retry in range(1, 6):
+                try:
+                    self._mqtt.reconnect()
+                    self._mqtt.loop_start()
+                    print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
+                    break
+                except Exception as reconnect_exc:
+                    print(f"[MQTT] 再接続失敗 device={self.device_name} attempt={retry}/5: {reconnect_exc}")
+                    if retry == 5:
+                        self.environment.events.request.fire(
+                            request_type="MQTT",
+                            name="send_telemetry",
+                            response_time=0,
+                            response_length=0,
+                            exception=reconnect_exc,
+                            context=self.context(),
+                        )
+                        return
+                    time.sleep(5 * retry)
 
         start = time.perf_counter()
         try:
