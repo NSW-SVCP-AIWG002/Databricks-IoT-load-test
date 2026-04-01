@@ -208,10 +208,10 @@ class MqttDeviceUser(User):
         try:
             cred = _credential_queue.get_nowait()
         except queue.Empty:
-            raise RuntimeError(
-                "デバイスキューが空です。DEVICE_COUNT または -u の値、"
-                "または device_credentials.csv の内容を確認してください。"
-            )
+            # キューが空 = 割り当て可能なデバイスがない → このユーザーを静かに停止
+            print("[WARN] デバイスキューが空です。このユーザーを停止します。")
+            self.stop()
+            return
 
         self.device_name  = cred["device_name"]
         self.device_id    = cred["device_id"]
@@ -253,11 +253,25 @@ class MqttDeviceUser(User):
             try:
                 self._mqtt.connect(iothub_hostname, port=8883, keepalive=120)
                 self._mqtt.loop_start()
+
+                # CONNACK を受け取るまで待機（IoT Hub の接続承認を確認）
+                connack_timeout = 30
+                connack_start = time.time()
+                while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
+                    time.sleep(0.2)
+
+                if not self._mqtt.is_connected():
+                    self._mqtt.loop_stop()
+                    raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
+
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
                 break
             except Exception as e:
                 print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}/{max_retries}: {e}")
                 if attempt == max_retries:
+                    # 認証情報をキューに戻して再利用可能にする
+                    _credential_queue.put(cred)
+                    print(f"[MQTT] 認証情報をキューに返却 device={self.device_name}")
                     raise RuntimeError(f"[MQTT] 接続失敗（{max_retries}回リトライ後）{self.device_name}: {e}") from e
                 time.sleep(retry_wait * attempt)  # 5秒 → 10秒 → 15秒と段階的に待機
 
