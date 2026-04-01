@@ -292,15 +292,13 @@ class MqttDeviceUser(User):
         body = json.dumps(_make_telemetry(self.device_id)).encode("utf-8")
 
         # 接続が切れている場合は再接続を試みる
-        # keepalive 維持のため loop を実行
-        self._mqtt.loop(timeout=0.1)
-
         if not self._mqtt.is_connected():
             print(f"[MQTT] 切断検知 device={self.device_name} → 再接続試行")
             for retry in range(1, 6):
                 try:
+                    self._mqtt.loop_stop()   # 既存スレッドを確実に停止
                     self._mqtt.reconnect()
-                    self._mqtt.loop_start()
+                    self._mqtt.loop_start()  # スレッドを再起動
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
                     break
                 except Exception as reconnect_exc:
@@ -320,7 +318,6 @@ class MqttDeviceUser(User):
         start = time.perf_counter()
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
-            self._mqtt.loop(timeout=0.01)  # 送信キューを処理
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             self.environment.events.request.fire(
