@@ -251,17 +251,17 @@ class MqttDeviceUser(User):
         retry_wait = 5  # 秒
         for attempt in range(1, max_retries + 1):
             try:
-                # keepalive=600: wait_time(300秒)の2倍に設定し、送信間隔内で接続を維持
-                # loop_start()は使用しない（geventとOSスレッドの非互換を回避）
-                self._mqtt.connect(iothub_hostname, port=8883, keepalive=600)
+                self._mqtt.connect(iothub_hostname, port=8883, keepalive=120)
+                self._mqtt.loop_start()
 
-                # CONNACK を受け取るまで loop() で処理（gevent グリーンレット内で完結）
+                # CONNACK を受け取るまで待機（loop_start のバックグラウンドスレッドが処理）
                 connack_timeout = 30
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
-                    self._mqtt.loop(timeout=0.1)
+                    time.sleep(0.2)
 
                 if not self._mqtt.is_connected():
+                    self._mqtt.loop_stop()
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
 
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
@@ -280,6 +280,7 @@ class MqttDeviceUser(User):
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
+            self._mqtt.loop_stop()
             self._mqtt.disconnect()
             print(f"[MQTT] 切断 device={self.device_name}")
 
@@ -292,12 +293,9 @@ class MqttDeviceUser(User):
             print(f"[MQTT] 切断検知 device={self.device_name} → 再接続試行")
             for retry in range(1, 6):
                 try:
+                    self._mqtt.loop_stop()
                     self._mqtt.reconnect()
-                    connack_start = time.time()
-                    while not self._mqtt.is_connected() and time.time() - connack_start < 30:
-                        self._mqtt.loop(timeout=0.1)
-                    if not self._mqtt.is_connected():
-                        raise RuntimeError("再接続 CONNACK タイムアウト")
+                    self._mqtt.loop_start()
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
                     break
                 except Exception as reconnect_exc:
@@ -317,7 +315,6 @@ class MqttDeviceUser(User):
         start = time.perf_counter()
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
-            self._mqtt.loop(timeout=0.1)  # 送信キューをフラッシュ（gevent内で処理）
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             self.environment.events.request.fire(
