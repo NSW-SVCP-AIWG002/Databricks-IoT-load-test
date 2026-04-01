@@ -244,8 +244,8 @@ class MqttDeviceUser(User):
 
         self._mqtt._connect_timeout = 30  # デフォルト5秒 → 30秒に延長
 
-        # 接続タイミングを分散（0〜120秒のランダム待機）
-        time.sleep(random.uniform(0, 120))
+        # 接続タイミングを分散（0〜30秒のランダム待機）
+        time.sleep(random.uniform(0, 30))
 
         max_retries = 10
         retry_wait = 5  # 秒
