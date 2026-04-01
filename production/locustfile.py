@@ -278,6 +278,9 @@ class MqttDeviceUser(User):
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
 
+        # 初回送信タイミングを分散（接続完了後 0〜60秒のランダム待機）
+        time.sleep(random.uniform(0, 60))
+
     def on_stop(self):
         if hasattr(self, "_mqtt"):
             self._mqtt.loop_stop()
