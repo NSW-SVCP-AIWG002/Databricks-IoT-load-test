@@ -256,7 +256,7 @@ class MqttDeviceUser(User):
                 self._mqtt.connect(iothub_hostname, port=8883, keepalive=600)
 
                 # CONNACK 待機: loop(1ms) + sleep(0) でgevent hubに制御を返しながら処理
-                connack_timeout = 30
+                connack_timeout = 120
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
                     self._mqtt.loop(timeout=0.001)
