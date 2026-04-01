@@ -5,11 +5,18 @@ version: "3.9"
 #
 # 構成:
 #   master     : Web UI / ワーカー統括
-#   worker-1   : device_id    1〜 1000
-#   worker-2   : device_id 1001〜 2000
-#   ...
-#   worker-20  : device_id 19001〜20000
-#   合計       : IoT 20,000台（1 worker × 1000台 × 20 worker）
+#   worker-1   : device_id     1〜 5000
+#   worker-2   : device_id  5001〜10000
+#   worker-3   : device_id 10001〜15000
+#   worker-4   : device_id 15001〜20000
+#   合計       : IoT 20,000台（5000台 × 4 worker）
+#
+# VM 構成:
+#   locust-master (10.10.1.4) : master のみ起動
+#   locust-worker-1 (10.10.1.5) : worker-1 のみ起動
+#   locust-worker-2 (10.10.1.6) : worker-2 のみ起動
+#   locust-worker-3 (10.10.1.7) : worker-3 のみ起動
+#   locust-worker-4 (10.10.1.8) : worker-4 のみ起動
 #
 # 事前準備:
 #   device.create.txt の [A][B] を順に実行して
@@ -18,18 +25,18 @@ version: "3.9"
 #   silver_pipeline.py（Databricks）が起動済みであること。
 #   Event Hub 経由で Delta Lake（ADLS）への書き込みを確認する。
 #
-# 起動（全20 worker）:
-#   docker compose up --build
+# 起動:
+#   Master VM : docker-compose up --build -d master
+#   Worker VM1: docker-compose up --build -d worker-1
+#   Worker VM2: docker-compose up --build -d worker-2
+#   Worker VM3: docker-compose up --build -d worker-3
+#   Worker VM4: docker-compose up --build -d worker-4
 #   → ブラウザで http://localhost:8089 を開き
 #     Users=20001, Spawn rate=200 でテスト開始
-#     (KafkaDeviceUser×20000 + EventHubConsumerUser×1)
-#
-# 段階的な起動（workerを絞る場合）:
-#   docker compose up --build master worker-1 worker-2
-#   → Users=2001, Spawn rate=50 でテスト開始
+#     (MqttDeviceUser×20000 + EventHubConsumerUser×1)
 #
 # 停止:
-#   docker compose down
+#   docker-compose down
 #
 # 統計 CSV 出力先: ./output/locust_statistics*.csv
 # 環境変数は .env ファイルで設定してください
@@ -43,10 +50,10 @@ x-worker-base: &worker-base
   env_file:
     - .env
   environment:
-    DEVICE_COUNT: 1000
+    DEVICE_COUNT: 5000
   command:
     - --worker
-    - --master-host=master
+    - --master-host=${MASTER_HOST:-master}
     - -f
     - locustfile.py
   networks:
@@ -89,141 +96,29 @@ services:
     <<: *worker-base
     container_name: locust-worker-1
     environment:
-      DEVICE_COUNT: 1000
+      DEVICE_COUNT: 5000
       DEVICE_ID_OFFSET: 1
 
   worker-2:
     <<: *worker-base
     container_name: locust-worker-2
     environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 1001
+      DEVICE_COUNT: 5000
+      DEVICE_ID_OFFSET: 5001
 
   worker-3:
     <<: *worker-base
     container_name: locust-worker-3
     environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 2001
+      DEVICE_COUNT: 5000
+      DEVICE_ID_OFFSET: 10001
 
   worker-4:
     <<: *worker-base
     container_name: locust-worker-4
     environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 3001
-
-  worker-5:
-    <<: *worker-base
-    container_name: locust-worker-5
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 4001
-
-  worker-6:
-    <<: *worker-base
-    container_name: locust-worker-6
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 5001
-
-  worker-7:
-    <<: *worker-base
-    container_name: locust-worker-7
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 6001
-
-  worker-8:
-    <<: *worker-base
-    container_name: locust-worker-8
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 7001
-
-  worker-9:
-    <<: *worker-base
-    container_name: locust-worker-9
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 8001
-
-  worker-10:
-    <<: *worker-base
-    container_name: locust-worker-10
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 9001
-
-  worker-11:
-    <<: *worker-base
-    container_name: locust-worker-11
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 10001
-
-  worker-12:
-    <<: *worker-base
-    container_name: locust-worker-12
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 11001
-
-  worker-13:
-    <<: *worker-base
-    container_name: locust-worker-13
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 12001
-
-  worker-14:
-    <<: *worker-base
-    container_name: locust-worker-14
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 13001
-
-  worker-15:
-    <<: *worker-base
-    container_name: locust-worker-15
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 14001
-
-  worker-16:
-    <<: *worker-base
-    container_name: locust-worker-16
-    environment:
-      DEVICE_COUNT: 1000
+      DEVICE_COUNT: 5000
       DEVICE_ID_OFFSET: 15001
-
-  worker-17:
-    <<: *worker-base
-    container_name: locust-worker-17
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 16001
-
-  worker-18:
-    <<: *worker-base
-    container_name: locust-worker-18
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 17001
-
-  worker-19:
-    <<: *worker-base
-    container_name: locust-worker-19
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 18001
-
-  worker-20:
-    <<: *worker-base
-    container_name: locust-worker-20
-    environment:
-      DEVICE_COUNT: 1000
-      DEVICE_ID_OFFSET: 19001
 
 networks:
   locust-net:
