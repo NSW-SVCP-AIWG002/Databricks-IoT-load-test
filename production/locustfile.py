@@ -71,6 +71,9 @@ _CREDS_FILE = os.getenv("DEVICE_CREDENTIALS_FILE", "device_credentials.csv")
 # デバイス認証情報 dict を格納: {device_name, device_id, primary_key}
 _credential_queue: queue.Queue = queue.Queue()
 _registration_done = threading.Event()  # 読込完了まで on_start をブロック
+_all_connected = threading.Event()      # 全デバイス接続完了まで送信をブロック
+_connected_count = 0
+_connected_count_lock = threading.Lock()
 
 
 def _load_credentials(offset: int, count: int) -> list[dict]:
@@ -276,8 +279,17 @@ class MqttDeviceUser(User):
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
 
-        # 初回送信タイミングを分散（接続完了後 0〜60秒のランダム待機）
-        time.sleep(random.uniform(0, 60))
+        # 接続完了カウントを更新し、全台接続完了で送信フェーズを解放
+        global _connected_count
+        with _connected_count_lock:
+            _connected_count += 1
+            device_count = int(os.getenv("DEVICE_COUNT", "20000"))
+            if _connected_count >= device_count:
+                print(f"[接続完了] 全{_connected_count}台接続完了 → 送信フェーズ開始")
+                _all_connected.set()
+
+        # 全デバイス接続完了まで待機（送信と接続を分離してhub負荷を軽減）
+        _all_connected.wait()
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
