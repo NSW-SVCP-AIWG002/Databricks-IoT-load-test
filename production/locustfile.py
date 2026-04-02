@@ -289,12 +289,15 @@ class MqttDeviceUser(User):
         device_count = int(os.getenv("DEVICE_COUNT", "20000"))
         global _connected_count, _failed_count
 
+        # 送信フェーズ開始の閾値: device_count の80%以上が接続完了 or 失敗確定で開始
+        _start_threshold = int(device_count * 0.8)
+
         if connection_error is not None:
             # 永続的な接続失敗 → 失敗カウントを更新してから例外を送出
             with _connected_count_lock:
                 _failed_count += 1
                 total_done = _connected_count + _failed_count
-                if total_done >= device_count:
+                if _connected_count >= _start_threshold or total_done >= device_count:
                     print(f"[接続完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
                     _all_connected.set()
             raise RuntimeError(
@@ -304,16 +307,16 @@ class MqttDeviceUser(User):
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
 
-        # 接続完了カウントを更新し、全台接続完了で送信フェーズを解放
+        # 接続完了カウントを更新し、閾値到達で送信フェーズを解放
         with _connected_count_lock:
             _connected_count += 1
             total_done = _connected_count + _failed_count
-            if total_done >= device_count:
+            if _connected_count >= _start_threshold or total_done >= device_count:
                 print(f"[接続完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
                 _all_connected.set()
 
-        # 全デバイス接続完了まで待機（送信と接続を分離してhub負荷を軽減）
-        # timeout=1800: 万が一カウントロジックに不整合があった場合のフェイルセーフ
+        # 送信フェーズ開始まで待機
+        # timeout=1800: フェイルセーフ（カウントロジック不整合時）
         _all_connected.wait(timeout=1800)
 
     def on_stop(self):
