@@ -73,6 +73,7 @@ _credential_queue: queue.Queue = queue.Queue()
 _registration_done = threading.Event()  # 読込完了まで on_start をブロック
 _all_connected = threading.Event()      # 全デバイス接続完了まで送信をブロック
 _connected_count = 0
+_failed_count = 0
 _connected_count_lock = threading.Lock()
 
 # IoT Hub への同時接続数を制限（サンダーハード防止）
@@ -257,6 +258,7 @@ class MqttDeviceUser(User):
 
         max_retries = 10
         retry_wait = 10  # 秒（セマフォで順番待ちするため短縮不要）
+        connection_error = None
         for attempt in range(1, max_retries + 1):
             try:
                 # セマフォで同時接続試行数を制限（IoT Hub のレートリミット対策）
@@ -276,12 +278,28 @@ class MqttDeviceUser(User):
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
 
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
+                connection_error = None
                 break
             except Exception as e:
+                connection_error = e
                 print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}/{max_retries}: {e}")
-                if attempt == max_retries:
-                    raise RuntimeError(f"[MQTT] 接続失敗（{max_retries}回リトライ後）{self.device_name}: {e}") from e
-                time.sleep(retry_wait * attempt)  # 10秒 → 20秒 → 30秒と段階的に待機
+                if attempt < max_retries:
+                    time.sleep(retry_wait * attempt)  # 10秒 → 20秒 → 30秒と段階的に待機
+
+        device_count = int(os.getenv("DEVICE_COUNT", "20000"))
+
+        if connection_error is not None:
+            # 永続的な接続失敗 → 失敗カウントを更新してから例外を送出
+            global _failed_count
+            with _connected_count_lock:
+                _failed_count += 1
+                total_done = _connected_count + _failed_count
+                if total_done >= device_count:
+                    print(f"[接続完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
+                    _all_connected.set()
+            raise RuntimeError(
+                f"[MQTT] 接続失敗（{max_retries}回リトライ後）{self.device_name}: {connection_error}"
+            ) from connection_error
 
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
@@ -290,13 +308,14 @@ class MqttDeviceUser(User):
         global _connected_count
         with _connected_count_lock:
             _connected_count += 1
-            device_count = int(os.getenv("DEVICE_COUNT", "20000"))
-            if _connected_count >= device_count:
-                print(f"[接続完了] 全{_connected_count}台接続完了 → 送信フェーズ開始")
+            total_done = _connected_count + _failed_count
+            if total_done >= device_count:
+                print(f"[接続完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（送信と接続を分離してhub負荷を軽減）
-        _all_connected.wait()
+        # timeout=1800: 万が一カウントロジックに不整合があった場合のフェイルセーフ
+        _all_connected.wait(timeout=1800)
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
