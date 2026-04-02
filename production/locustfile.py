@@ -287,10 +287,10 @@ class MqttDeviceUser(User):
                     time.sleep(retry_wait * attempt)  # 10秒 → 20秒 → 30秒と段階的に待機
 
         device_count = int(os.getenv("DEVICE_COUNT", "20000"))
+        global _connected_count, _failed_count
 
         if connection_error is not None:
             # 永続的な接続失敗 → 失敗カウントを更新してから例外を送出
-            global _failed_count
             with _connected_count_lock:
                 _failed_count += 1
                 total_done = _connected_count + _failed_count
@@ -305,7 +305,6 @@ class MqttDeviceUser(User):
         self._topic = f"devices/{self.device_name}/messages/events/"
 
         # 接続完了カウントを更新し、全台接続完了で送信フェーズを解放
-        global _connected_count
         with _connected_count_lock:
             _connected_count += 1
             total_done = _connected_count + _failed_count
