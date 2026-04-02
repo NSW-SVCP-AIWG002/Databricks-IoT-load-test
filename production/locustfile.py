@@ -71,7 +71,10 @@ _CREDS_FILE = os.getenv("DEVICE_CREDENTIALS_FILE", "device_credentials.csv")
 # デバイス認証情報 dict を格納: {device_name, device_id, primary_key}
 _credential_queue: queue.Queue = queue.Queue()
 _registration_done = threading.Event()  # 読込完了まで on_start をブロック
+_all_connected = threading.Event()      # 全デバイス接続完了まで送信をブロック
 _connected_count = 0
+_failed_count = 0
+_total_device_count = 0  # on_test_start で実際の読込件数をセット
 _connected_count_lock = threading.Lock()
 
 
@@ -277,9 +280,16 @@ class MqttDeviceUser(User):
                 if attempt < max_retries:
                     time.sleep(retry_wait * attempt)  # 10秒 → 20秒 → 30秒と段階的に待機
 
-        global _connected_count
+        global _connected_count, _failed_count
 
         if connection_error is not None:
+            # 永続的な接続失敗 → 失敗カウントを更新してイベント判定
+            with _connected_count_lock:
+                _failed_count += 1
+                total_done = _connected_count + _failed_count
+                if total_done >= _total_device_count:
+                    print(f"[接続フェーズ完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
+                    _all_connected.set()
             raise RuntimeError(
                 f"[MQTT] 接続失敗（{max_retries}回リトライ後）{self.device_name}: {connection_error}"
             ) from connection_error
@@ -287,10 +297,17 @@ class MqttDeviceUser(User):
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
 
-        # 接続完了カウントを更新（送信は即時開始）
+        # 接続完了カウントを更新し、全台完了で送信フェーズを解放
         with _connected_count_lock:
             _connected_count += 1
-            print(f"[接続完了] {self.device_name} 接続済み合計: {_connected_count}台")
+            total_done = _connected_count + _failed_count
+            print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_total_device_count}台")
+            if total_done >= _total_device_count:
+                print(f"[接続フェーズ完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
+                _all_connected.set()
+
+        # 全デバイス接続完了まで待機（timeout=1800はフェイルセーフ）
+        _all_connected.wait(timeout=1800)
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
@@ -634,6 +651,10 @@ def on_test_start(environment, **kwargs):
 
     for cred in creds:
         _credential_queue.put(cred)
+
+    global _total_device_count
+    _total_device_count = len(creds)
+    print(f"[デバイス読込] 送信開始待機の対象: {_total_device_count}台")
 
     _registration_done.set()
 
