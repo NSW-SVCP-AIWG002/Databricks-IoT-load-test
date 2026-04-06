@@ -268,7 +268,7 @@ class MqttDeviceUser(User):
                 connack_timeout = 120
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
-                    self._mqtt.loop(timeout=0.001)
+                    self._mqtt.loop(timeout=0.1)
                     time.sleep(0)  # gevent hub に制御を返す
 
                 if not self._mqtt.is_connected():
@@ -332,7 +332,7 @@ class MqttDeviceUser(User):
                     self._mqtt.reconnect()
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
-                        self._mqtt.loop(timeout=0.001)
+                        self._mqtt.loop(timeout=0.1)
                         time.sleep(0)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
@@ -355,7 +355,7 @@ class MqttDeviceUser(User):
         start = time.perf_counter()
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
-            self._mqtt.loop(timeout=0.001)
+            self._mqtt.loop(timeout=0.1)
             time.sleep(0)  # gevent hub に制御を返す
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
