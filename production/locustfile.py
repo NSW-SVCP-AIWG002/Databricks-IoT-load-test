@@ -238,7 +238,7 @@ class MqttDeviceUser(User):
         # 接続タイミングを分散（0〜300秒のランダム待機）
         time.sleep(random.uniform(0, 300))
 
-        connack_timeout = 150
+        connack_timeout = 300
         retry_wait_base = 60  # 失敗後のリトライ基準待機時間
         attempt = 0
         while True:
