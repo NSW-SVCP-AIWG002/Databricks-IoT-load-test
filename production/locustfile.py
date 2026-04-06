@@ -204,8 +204,8 @@ class MqttDeviceUser(User):
       DEVICE_CREDENTIALS_FILE   - デバイス認証情報 CSV パス（デフォルト: device_credentials.csv）
     """
 
-    # 初回送信後は5分間隔で送信
-    wait_time = between(300, 300)
+    # 送信間隔に分散を持たせる（240〜360秒 = 4〜6分）
+    wait_time = between(240, 360)
 
     def on_start(self):
         _registration_done.wait()  # 認証情報読込完了まで待機
@@ -287,7 +287,7 @@ class MqttDeviceUser(User):
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
-        # keepalive=1740秒なので30秒に1回loopすれば十分（余裕を持って58回分）
+        # keepalive=1740秒なので60秒に1回loopすれば十分（余裕を持って29回分）
         # 待機中に切断された場合は再接続を試みる（ジッター付き）
         wait_start = time.time()
         while not _all_connected.is_set() and time.time() - wait_start < 3600:
@@ -308,7 +308,7 @@ class MqttDeviceUser(User):
                         print(f"[MQTT] 待機中再接続失敗 device={self.device_name}")
                 except Exception as e:
                     print(f"[MQTT] 待機中再接続エラー device={self.device_name}: {e}")
-            time.sleep(30.0)
+            time.sleep(60.0)
 
         # 送信開始タイミングを分散（全台が同時にsend_telemetryを呼ぶのを防ぐ）
         time.sleep(random.uniform(0, 60))

@@ -84,7 +84,6 @@ services:
       - -f
       - locustfile.py
       - --csv=output/locust_statistics
-      - --csv-full-history
       - --logfile=output/locust.log
     volumes:
       - ./device_credentials.csv:/loadtest/device_credentials.csv:ro
