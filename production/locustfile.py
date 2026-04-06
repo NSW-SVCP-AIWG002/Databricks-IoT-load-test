@@ -72,10 +72,8 @@ _CREDS_FILE = os.getenv("DEVICE_CREDENTIALS_FILE", "device_credentials.csv")
 _credential_queue: queue.Queue = queue.Queue()
 _registration_done = threading.Event()  # 読込完了まで on_start をブロック
 _all_connected = threading.Event()      # 全デバイス接続完了まで送信をブロック
-_first_attempt_done = threading.Event() # 全台の初回接続試行完了後に失敗デバイスが再試行
 _connected_count = 0
 _failed_count = 0
-_first_attempt_count = 0  # 初回接続試行完了数（成功+失敗）
 _issued_count = 0   # credential を取得したユーザー数（スポーン完了後に確定）
 _connected_count_lock = threading.Lock()
 
@@ -212,7 +210,7 @@ class MqttDeviceUser(User):
     def on_start(self):
         _registration_done.wait()  # 認証情報読込完了まで待機
 
-        global _issued_count, _first_attempt_count, _connected_count, _failed_count
+        global _issued_count, _connected_count, _failed_count
         try:
             cred = _credential_queue.get_nowait()
             with _connected_count_lock:
@@ -261,7 +259,7 @@ class MqttDeviceUser(User):
             )
             self._mqtt._connect_timeout = 30
             try:
-                self._mqtt.connect(iothub_hostname, port=8883, keepalive=1800)
+                self._mqtt.connect(iothub_hostname, port=8883, keepalive=1740)
 
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
@@ -272,30 +270,10 @@ class MqttDeviceUser(User):
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
 
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
-
-                # 初回試行完了カウント（成功）
-                if attempt == 1:
-                    with _connected_count_lock:
-
-                        _first_attempt_count += 1
-                        if _first_attempt_count >= _issued_count:
-                            _first_attempt_done.set()
                 break
             except Exception as e:
-                if attempt == 1:
-                    # 初回試行失敗 → 全台の初回試行完了まで待機してから再試行
-                    with _connected_count_lock:
-
-                        _first_attempt_count += 1
-                        if _first_attempt_count >= _issued_count:
-                            _first_attempt_done.set()
-                    print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → 全台初回試行完了後に再試行")
-                    _first_attempt_done.wait(timeout=7200)
-                    # 再試行の集中を避けるためランダム分散
-                    time.sleep(random.uniform(0, 120))
-                else:
-                    print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait}秒後に再試行")
-                    time.sleep(retry_wait)
+                print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait}秒後に再試行")
+                time.sleep(retry_wait)
 
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
@@ -304,16 +282,36 @@ class MqttDeviceUser(User):
         with _connected_count_lock:
             _connected_count += 1
             print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_issued_count}台")
-            if _issued_count > 0 and _connected_count >= _issued_count:
-                print(f"[接続フェーズ完了] 接続{_connected_count}台 → 送信フェーズ開始")
+            if _issued_count > 0 and _connected_count >= _issued_count * 0.95:
+                print(f"[接続フェーズ完了] 接続{_connected_count}台 / {_issued_count}台（95%以上）→ 送信フェーズ開始")
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
-        # keepalive=1800秒なので90秒に1回loopすれば十分
+        # keepalive=1740秒なので90秒に1回loopすれば十分
+        # 待機中に切断された場合は再接続を試みる（ジッター付き）
         wait_start = time.time()
         while not _all_connected.is_set() and time.time() - wait_start < 3600:
             self._mqtt.loop(timeout=0.1)
+            if not self._mqtt.is_connected():
+                print(f"[MQTT] 待機中に切断 device={self.device_name} → 再接続試行")
+                # 再接続を分散させるためランダム待機（TLSハンドシェイクの集中を防ぐ）
+                time.sleep(random.uniform(0, 60))
+                try:
+                    self._mqtt.reconnect()
+                    reconnack_start = time.time()
+                    while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
+                        self._mqtt.loop(timeout=0.1)
+                        time.sleep(2.0)
+                    if self._mqtt.is_connected():
+                        print(f"[MQTT] 待機中再接続成功 device={self.device_name}")
+                    else:
+                        print(f"[MQTT] 待機中再接続失敗 device={self.device_name}")
+                except Exception as e:
+                    print(f"[MQTT] 待機中再接続エラー device={self.device_name}: {e}")
             time.sleep(90.0)
+
+        # 送信開始タイミングを分散（全台が同時にsend_telemetryを呼ぶのを防ぐ）
+        time.sleep(random.uniform(0, 60))
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
@@ -327,6 +325,8 @@ class MqttDeviceUser(User):
         # 接続が切れている場合は再接続を試みる
         if not self._mqtt.is_connected():
             print(f"[MQTT] 切断検知 device={self.device_name} → 再接続試行")
+            # 再接続を分散（TLSハンドシェイクの集中を防ぐ）
+            time.sleep(random.uniform(0, 30))
             for retry in range(1, 6):
                 try:
                     self._mqtt.reconnect()
@@ -356,7 +356,6 @@ class MqttDeviceUser(User):
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
             self._mqtt.loop(timeout=0.1)
-            time.sleep(0)  # gevent hub に制御を返す
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             self.environment.events.request.fire(
