@@ -262,14 +262,14 @@ class MqttDeviceUser(User):
             try:
                 # keepalive=600: wait_time(300秒)の2倍。PUBLISHがkeepaliveタイマーをリセットするため
                 # PINGREQは不要。loop_start()は使用しない（gevent socketとOSスレッドの非互換回避）
-                self._mqtt.connect(iothub_hostname, port=8883, keepalive=600)
+                self._mqtt.connect(iothub_hostname, port=8883, keepalive=1800)
 
                 # CONNACK 待機: loop(1ms) + sleep(0) でgevent hubに制御を返しながら処理
-                connack_timeout = 120
+                connack_timeout = 30
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
                     self._mqtt.loop(timeout=0.1)
-                    time.sleep(0)  # gevent hub に制御を返す
+                    time.sleep(2.0)  # CPU負荷軽減のため2秒待機
 
                 if not self._mqtt.is_connected():
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
@@ -310,10 +310,11 @@ class MqttDeviceUser(User):
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
+        # keepalive=1800秒なので90秒に1回loopすれば十分
         wait_start = time.time()
         while not _all_connected.is_set() and time.time() - wait_start < 3600:
             self._mqtt.loop(timeout=0.1)
-            time.sleep(0)
+            time.sleep(90.0)
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
@@ -333,7 +334,7 @@ class MqttDeviceUser(User):
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
                         self._mqtt.loop(timeout=0.1)
-                        time.sleep(0)
+                        time.sleep(0.5)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
