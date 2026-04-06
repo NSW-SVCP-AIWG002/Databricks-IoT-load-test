@@ -212,7 +212,7 @@ class MqttDeviceUser(User):
     def on_start(self):
         _registration_done.wait()  # 認証情報読込完了まで待機
 
-        global _issued_count, _first_attempt_count
+        global _issued_count, _first_attempt_count, _connected_count, _failed_count
         try:
             cred = _credential_queue.get_nowait()
             with _connected_count_lock:
