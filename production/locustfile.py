@@ -235,8 +235,8 @@ class MqttDeviceUser(User):
             iothub_hostname, self.device_name, self._primary_key, expiry_secs=86400
         )
 
-        # 接続タイミングを分散（0〜120秒のランダム待機）
-        time.sleep(random.uniform(0, 120))
+        # 接続タイミングを分散（0〜300秒のランダム待機）
+        time.sleep(random.uniform(0, 300))
 
         connack_timeout = 150
         retry_wait = 60  # 失敗後60秒待機して再試行
@@ -264,7 +264,7 @@ class MqttDeviceUser(User):
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
                     self._mqtt.loop(timeout=0.1)
-                    time.sleep(2.0)
+                    time.sleep(5.0)
 
                 if not self._mqtt.is_connected():
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
@@ -287,7 +287,7 @@ class MqttDeviceUser(User):
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
-        # keepalive=1740秒なので90秒に1回loopすれば十分
+        # keepalive=1740秒なので30秒に1回loopすれば十分（余裕を持って58回分）
         # 待機中に切断された場合は再接続を試みる（ジッター付き）
         wait_start = time.time()
         while not _all_connected.is_set() and time.time() - wait_start < 3600:
@@ -301,14 +301,14 @@ class MqttDeviceUser(User):
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
                         self._mqtt.loop(timeout=0.1)
-                        time.sleep(2.0)
+                        time.sleep(5.0)
                     if self._mqtt.is_connected():
                         print(f"[MQTT] 待機中再接続成功 device={self.device_name}")
                     else:
                         print(f"[MQTT] 待機中再接続失敗 device={self.device_name}")
                 except Exception as e:
                     print(f"[MQTT] 待機中再接続エラー device={self.device_name}: {e}")
-            time.sleep(90.0)
+            time.sleep(30.0)
 
         # 送信開始タイミングを分散（全台が同時にsend_telemetryを呼ぶのを防ぐ）
         time.sleep(random.uniform(0, 60))
@@ -333,7 +333,7 @@ class MqttDeviceUser(User):
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
                         self._mqtt.loop(timeout=0.1)
-                        time.sleep(2.0)
+                        time.sleep(5.0)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
