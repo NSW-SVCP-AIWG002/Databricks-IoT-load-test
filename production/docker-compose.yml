@@ -4,35 +4,32 @@ version: "3.9"
 # Locust 分散負荷テスト構成（20,000台構成）
 #
 # 構成:
-#   master     : Web UI / ワーカー統括
-#   worker-1   : device_id     1〜 5000
-#   worker-2   : device_id  5001〜10000
-#   worker-3   : device_id 10001〜15000
-#   worker-4   : device_id 15001〜20000
-#   合計       : IoT 20,000台（5000台 × 4 worker）
+#   master      : Web UI / ワーカー統括
+#   worker-1a/b : device_id     1〜 2500 / 2501〜 5000
+#   worker-2a/b : device_id  5001〜 7500 / 7501〜10000
+#   worker-3a/b : device_id 10001〜12500 / 12501〜15000
+#   worker-4a/b : device_id 15001〜17500 / 17501〜20000
+#   合計        : IoT 20,000台（2500台 × 8 worker）
 #
 # VM 構成:
 #   locust-master (10.10.1.4) : master のみ起動
-#   locust-worker-1 (10.10.1.5) : worker-1 のみ起動
-#   locust-worker-2 (10.10.1.6) : worker-2 のみ起動
-#   locust-worker-3 (10.10.1.7) : worker-3 のみ起動
-#   locust-worker-4 (10.10.1.8) : worker-4 のみ起動
+#   locust-worker-1 (10.10.1.5) : worker-1a, worker-1b を起動
+#   locust-worker-2 (10.10.1.6) : worker-2a, worker-2b を起動
+#   locust-worker-3 (10.10.1.7) : worker-3a, worker-3b を起動
+#   locust-worker-4 (10.10.1.8) : worker-4a, worker-4b を起動
 #
-# 事前準備:
-#   device.create.txt の [A][B] を順に実行して
-#   device_master に 20,000台分を登録すること
-#
-#   silver_pipeline.py（Databricks）が起動済みであること。
-#   Event Hub 経由で Delta Lake（ADLS）への書き込みを確認する。
+# 理由:
+#   Python GIL により 1プロセス = 1コアしか使えない。
+#   1VMに2コンテナ起動することで2プロセス = 2コア利用可能になる。
 #
 # 起動:
 #   Master VM : docker-compose up --build -d master
-#   Worker VM1: docker-compose up --build -d worker-1
-#   Worker VM2: docker-compose up --build -d worker-2
-#   Worker VM3: docker-compose up --build -d worker-3
-#   Worker VM4: docker-compose up --build -d worker-4
+#   Worker VM1: docker-compose up --build -d worker-1a worker-1b
+#   Worker VM2: docker-compose up --build -d worker-2a worker-2b
+#   Worker VM3: docker-compose up --build -d worker-3a worker-3b
+#   Worker VM4: docker-compose up --build -d worker-4a worker-4b
 #   → ブラウザで http://localhost:8089 を開き
-#     Users=20001, Spawn rate=200 でテスト開始
+#     Users=20001, Spawn rate=20 でテスト開始
 #     (MqttDeviceUser×20000 + EventHubConsumerUser×1)
 #
 # 停止:
@@ -50,7 +47,7 @@ x-worker-base: &worker-base
   env_file:
     - .env
   environment:
-    DEVICE_COUNT: 5000
+    DEVICE_COUNT: 2500
   command:
     - --worker
     - --master-host=${MASTER_HOST:-master}
@@ -91,33 +88,61 @@ services:
     networks:
       - locust-net
 
-  worker-1:
+  worker-1a:
     <<: *worker-base
-    container_name: locust-worker-1
+    container_name: locust-worker-1a
     environment:
-      DEVICE_COUNT: 5000
+      DEVICE_COUNT: 2500
       DEVICE_ID_OFFSET: 1
 
-  worker-2:
+  worker-1b:
     <<: *worker-base
-    container_name: locust-worker-2
+    container_name: locust-worker-1b
     environment:
-      DEVICE_COUNT: 5000
+      DEVICE_COUNT: 2500
+      DEVICE_ID_OFFSET: 2501
+
+  worker-2a:
+    <<: *worker-base
+    container_name: locust-worker-2a
+    environment:
+      DEVICE_COUNT: 2500
       DEVICE_ID_OFFSET: 5001
 
-  worker-3:
+  worker-2b:
     <<: *worker-base
-    container_name: locust-worker-3
+    container_name: locust-worker-2b
     environment:
-      DEVICE_COUNT: 5000
+      DEVICE_COUNT: 2500
+      DEVICE_ID_OFFSET: 7501
+
+  worker-3a:
+    <<: *worker-base
+    container_name: locust-worker-3a
+    environment:
+      DEVICE_COUNT: 2500
       DEVICE_ID_OFFSET: 10001
 
-  worker-4:
+  worker-3b:
     <<: *worker-base
-    container_name: locust-worker-4
+    container_name: locust-worker-3b
     environment:
-      DEVICE_COUNT: 5000
+      DEVICE_COUNT: 2500
+      DEVICE_ID_OFFSET: 12501
+
+  worker-4a:
+    <<: *worker-base
+    container_name: locust-worker-4a
+    environment:
+      DEVICE_COUNT: 2500
       DEVICE_ID_OFFSET: 15001
+
+  worker-4b:
+    <<: *worker-base
+    container_name: locust-worker-4b
+    environment:
+      DEVICE_COUNT: 2500
+      DEVICE_ID_OFFSET: 17501
 
 networks:
   locust-net:

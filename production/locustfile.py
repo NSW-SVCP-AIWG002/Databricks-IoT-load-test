@@ -264,7 +264,7 @@ class MqttDeviceUser(User):
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
                     self._mqtt.loop(timeout=0.1)
-                    time.sleep(5.0)
+                    time.sleep(10.0)
 
                 if not self._mqtt.is_connected():
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
