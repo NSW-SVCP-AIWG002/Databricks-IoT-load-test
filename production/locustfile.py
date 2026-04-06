@@ -309,8 +309,11 @@ class MqttDeviceUser(User):
                 print(f"[接続フェーズ完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
                 _all_connected.set()
 
-        # 全デバイス接続完了まで待機（timeout=1800はフェイルセーフ）
-        _all_connected.wait(timeout=1800)
+        # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
+        wait_start = time.time()
+        while not _all_connected.is_set() and time.time() - wait_start < 3600:
+            self._mqtt.loop(timeout=0.1)
+            time.sleep(0)
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):

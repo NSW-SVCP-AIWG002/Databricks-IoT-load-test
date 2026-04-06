@@ -120,6 +120,72 @@ FROM seq, base;
 
 
 -- ============================================================
+-- [D] 新テーブル構造対応：20,000台分（device_id 5〜20,000）
+--
+-- 前提:
+--   - device_id 1〜4 が既に登録済みであること
+--   - 新テーブル構造（sim_id, software_version, device_location,
+--     certificate_expiration_date カラム追加済み）であること
+--   - FK 参照先の値は device_id=1 のレコードから取得する
+-- ============================================================
+
+ALTER TABLE device_master AUTO_INCREMENT = 5;
+
+SET SESSION cte_max_recursion_depth = 20000;
+
+INSERT INTO device_master (
+    device_uuid,
+    device_name,
+    device_model,
+    organization_id,
+    device_type_id,
+    device_inventory_id,
+    sim_id,
+    mac_address,
+    software_version,
+    device_location,
+    certificate_expiration_date,
+    creator,
+    modifier,
+    create_date,
+    update_date,
+    delete_flag
+)
+WITH RECURSIVE seq(n) AS (
+    SELECT 5
+    UNION ALL
+    SELECT n + 1 FROM seq WHERE n < 20000
+),
+base AS (
+    SELECT organization_id, device_type_id, device_inventory_id, device_model, creator, modifier
+    FROM device_master
+    WHERE device_id = 1
+)
+SELECT
+    UUID()                                       AS device_uuid,
+    CONCAT('loadtest-device-', LPAD(n, 5, '0')) AS device_name,
+    base.device_model,
+    base.organization_id,
+    base.device_type_id,
+    base.device_inventory_id,
+    NULL                                         AS sim_id,
+    NULL                                         AS mac_address,
+    NULL                                         AS software_version,
+    NULL                                         AS device_location,
+    NULL                                         AS certificate_expiration_date,
+    base.creator,
+    base.modifier,
+    NOW()                                        AS create_date,
+    NOW()                                        AS update_date,
+    0                                            AS delete_flag
+FROM seq, base;
+
+-- 登録件数確認
+-- SELECT COUNT(*) FROM device_master WHERE device_name LIKE 'loadtest-device-%';   -- 19,996 になること
+-- SELECT COUNT(*) FROM device_master;   -- 20,000 になること（既存4件 + 19,996件）
+
+
+-- ============================================================
 -- [C] クリーンアップ（必要な場合のみ）
 --     loadtest-device- で始まるレコードを削除する
 -- ============================================================
