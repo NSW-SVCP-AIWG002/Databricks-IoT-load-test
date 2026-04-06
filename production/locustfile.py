@@ -283,8 +283,8 @@ class MqttDeviceUser(User):
         with _connected_count_lock:
             _connected_count += 1
             print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_issued_count}台")
-            if _issued_count > 0 and _connected_count >= _issued_count * 0.95:
-                print(f"[接続フェーズ完了] 接続{_connected_count}台 / {_issued_count}台（95%以上）→ 送信フェーズ開始")
+            if _issued_count > 0 and _connected_count >= _issued_count * 0.99:
+                print(f"[接続フェーズ完了] 接続{_connected_count}台 / {_issued_count}台（99%以上）→ 送信フェーズ開始")
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
