@@ -232,7 +232,7 @@ class MqttDeviceUser(User):
 
         # SAS トークン生成（有効期限: 2時間）
         sas_token = _generate_sas_token(
-            iothub_hostname, self.device_name, self._primary_key, expiry_secs=7200
+            iothub_hostname, self.device_name, self._primary_key, expiry_secs=86400
         )
 
         # paho-mqtt クライアント生成・接続
@@ -252,8 +252,8 @@ class MqttDeviceUser(User):
 
         self._mqtt._connect_timeout = 30  # デフォルト5秒 → 30秒に延長
 
-        # 接続タイミングを分散（0〜120秒のランダム待機）
-        time.sleep(random.uniform(0, 120))
+        # 接続タイミングを分散（0〜600秒のランダム待機）
+        time.sleep(random.uniform(0, 600))
 
         max_retries = 10
         retry_wait = 10  # 秒（セマフォで順番待ちするため短縮不要）
@@ -265,7 +265,7 @@ class MqttDeviceUser(User):
                 self._mqtt.connect(iothub_hostname, port=8883, keepalive=1800)
 
                 # CONNACK 待機: loop(1ms) + sleep(0) でgevent hubに制御を返しながら処理
-                connack_timeout = 30
+                connack_timeout = 150
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
                     self._mqtt.loop(timeout=0.1)
@@ -334,7 +334,7 @@ class MqttDeviceUser(User):
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
                         self._mqtt.loop(timeout=0.1)
-                        time.sleep(0.5)
+                        time.sleep(2.0)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
