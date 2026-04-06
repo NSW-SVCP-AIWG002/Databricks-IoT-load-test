@@ -239,7 +239,7 @@ class MqttDeviceUser(User):
         time.sleep(random.uniform(0, 300))
 
         connack_timeout = 150
-        retry_wait = 60  # 失敗後60秒待機して再試行
+        retry_wait_base = 60  # 失敗後のリトライ基準待機時間
         attempt = 0
         while True:
             attempt += 1
@@ -272,7 +272,8 @@ class MqttDeviceUser(User):
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
                 break
             except Exception as e:
-                print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait}秒後に再試行")
+                retry_wait = random.uniform(retry_wait_base, retry_wait_base * 3)
+                print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait:.0f}秒後に再試行")
                 time.sleep(retry_wait)
 
         # デバイス-to-クラウド メッセージトピック
