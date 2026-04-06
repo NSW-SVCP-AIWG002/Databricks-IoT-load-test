@@ -72,8 +72,10 @@ _CREDS_FILE = os.getenv("DEVICE_CREDENTIALS_FILE", "device_credentials.csv")
 _credential_queue: queue.Queue = queue.Queue()
 _registration_done = threading.Event()  # 読込完了まで on_start をブロック
 _all_connected = threading.Event()      # 全デバイス接続完了まで送信をブロック
+_first_attempt_done = threading.Event() # 全台の初回接続試行完了後に失敗デバイスが再試行
 _connected_count = 0
 _failed_count = 0
+_first_attempt_count = 0  # 初回接続試行完了数（成功+失敗）
 _issued_count = 0   # credential を取得したユーザー数（スポーン完了後に確定）
 _connected_count_lock = threading.Lock()
 
@@ -235,67 +237,65 @@ class MqttDeviceUser(User):
             iothub_hostname, self.device_name, self._primary_key, expiry_secs=86400
         )
 
-        # paho-mqtt クライアント生成・接続
-        self._mqtt = mqtt.Client(
-            client_id=self.device_name,
-            protocol=mqtt.MQTTv311,
-            transport="tcp",
-        )
-        self._mqtt.username_pw_set(
-            username=f"{iothub_hostname}/{self.device_name}/?api-version=2021-04-12",
-            password=sas_token,
-        )
-        self._mqtt.tls_set(
-            cert_reqs=ssl.CERT_REQUIRED,
-            tls_version=ssl.PROTOCOL_TLS_CLIENT,
-        )
+        # 接続タイミングを分散（0〜120秒のランダム待機）
+        time.sleep(random.uniform(0, 120))
 
-        self._mqtt._connect_timeout = 30  # デフォルト5秒 → 30秒に延長
-
-        # 接続タイミングを分散（0〜600秒のランダム待機）
-        time.sleep(random.uniform(0, 600))
-
-        max_retries = 10
-        retry_wait = 10  # 秒（セマフォで順番待ちするため短縮不要）
-        connection_error = None
-        for attempt in range(1, max_retries + 1):
+        connack_timeout = 150
+        retry_wait = 60  # 失敗後60秒待機して再試行
+        attempt = 0
+        while True:
+            attempt += 1
+            # 再試行のたびにクライアントを再作成（状態リセット）
+            self._mqtt = mqtt.Client(
+                client_id=self.device_name,
+                protocol=mqtt.MQTTv311,
+                transport="tcp",
+            )
+            self._mqtt.username_pw_set(
+                username=f"{iothub_hostname}/{self.device_name}/?api-version=2021-04-12",
+                password=sas_token,
+            )
+            self._mqtt.tls_set(
+                cert_reqs=ssl.CERT_REQUIRED,
+                tls_version=ssl.PROTOCOL_TLS_CLIENT,
+            )
+            self._mqtt._connect_timeout = 30
             try:
-                # keepalive=600: wait_time(300秒)の2倍。PUBLISHがkeepaliveタイマーをリセットするため
-                # PINGREQは不要。loop_start()は使用しない（gevent socketとOSスレッドの非互換回避）
                 self._mqtt.connect(iothub_hostname, port=8883, keepalive=1800)
 
-                # CONNACK 待機: loop(1ms) + sleep(0) でgevent hubに制御を返しながら処理
-                connack_timeout = 150
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
                     self._mqtt.loop(timeout=0.1)
-                    time.sleep(2.0)  # CPU負荷軽減のため2秒待機
+                    time.sleep(2.0)
 
                 if not self._mqtt.is_connected():
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
 
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
-                connection_error = None
+
+                # 初回試行完了カウント（成功）
+                if attempt == 1:
+                    with _connected_count_lock:
+                        global _first_attempt_count
+                        _first_attempt_count += 1
+                        if _first_attempt_count >= _issued_count:
+                            _first_attempt_done.set()
                 break
             except Exception as e:
-                connection_error = e
-                print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}/{max_retries}: {e}")
-                if attempt < max_retries:
-                    time.sleep(retry_wait * attempt)  # 10秒 → 20秒 → 30秒と段階的に待機
-
-        global _connected_count, _failed_count
-
-        if connection_error is not None:
-            # 永続的な接続失敗 → 失敗カウントを更新してイベント判定
-            with _connected_count_lock:
-                _failed_count += 1
-                total_done = _connected_count + _failed_count
-                if _issued_count > 0 and total_done >= _issued_count:
-                    print(f"[接続フェーズ完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
-                    _all_connected.set()
-            raise RuntimeError(
-                f"[MQTT] 接続失敗（{max_retries}回リトライ後）{self.device_name}: {connection_error}"
-            ) from connection_error
+                if attempt == 1:
+                    # 初回試行失敗 → 全台の初回試行完了まで待機してから再試行
+                    with _connected_count_lock:
+                        global _first_attempt_count
+                        _first_attempt_count += 1
+                        if _first_attempt_count >= _issued_count:
+                            _first_attempt_done.set()
+                    print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → 全台初回試行完了後に再試行")
+                    _first_attempt_done.wait(timeout=7200)
+                    # 再試行の集中を避けるためランダム分散
+                    time.sleep(random.uniform(0, 120))
+                else:
+                    print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait}秒後に再試行")
+                    time.sleep(retry_wait)
 
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
@@ -303,10 +303,9 @@ class MqttDeviceUser(User):
         # 接続完了カウントを更新し、全台完了で送信フェーズを解放
         with _connected_count_lock:
             _connected_count += 1
-            total_done = _connected_count + _failed_count
             print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_issued_count}台")
-            if _issued_count > 0 and total_done >= _issued_count:
-                print(f"[接続フェーズ完了] 接続{_connected_count}台 失敗{_failed_count}台 → 送信フェーズ開始")
+            if _issued_count > 0 and _connected_count >= _issued_count:
+                print(f"[接続フェーズ完了] 接続{_connected_count}台 → 送信フェーズ開始")
                 _all_connected.set()
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
