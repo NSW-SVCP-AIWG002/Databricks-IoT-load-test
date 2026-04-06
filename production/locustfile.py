@@ -212,7 +212,7 @@ class MqttDeviceUser(User):
     def on_start(self):
         _registration_done.wait()  # 認証情報読込完了まで待機
 
-        global _issued_count
+        global _issued_count, _first_attempt_count
         try:
             cred = _credential_queue.get_nowait()
             with _connected_count_lock:
@@ -276,7 +276,7 @@ class MqttDeviceUser(User):
                 # 初回試行完了カウント（成功）
                 if attempt == 1:
                     with _connected_count_lock:
-                        global _first_attempt_count
+
                         _first_attempt_count += 1
                         if _first_attempt_count >= _issued_count:
                             _first_attempt_done.set()
@@ -285,7 +285,7 @@ class MqttDeviceUser(User):
                 if attempt == 1:
                     # 初回試行失敗 → 全台の初回試行完了まで待機してから再試行
                     with _connected_count_lock:
-                        global _first_attempt_count
+
                         _first_attempt_count += 1
                         if _first_attempt_count >= _issued_count:
                             _first_attempt_done.set()
