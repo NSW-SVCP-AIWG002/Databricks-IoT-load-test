@@ -235,11 +235,11 @@ class MqttDeviceUser(User):
             iothub_hostname, self.device_name, self._primary_key, expiry_secs=86400
         )
 
-        # 接続タイミングを分散（0〜300秒のランダム待機）
-        time.sleep(random.uniform(0, 300))
+        # 接続タイミングを分散（0〜120秒のランダム待機）
+        time.sleep(random.uniform(0, 120))
 
-        connack_timeout = 300
-        retry_wait_base = 60  # 失敗後のリトライ基準待機時間
+        connack_timeout = 60
+        retry_wait_base = 30  # 失敗後のリトライ基準待機時間
         attempt = 0
         while True:
             attempt += 1
@@ -286,6 +286,18 @@ class MqttDeviceUser(User):
             if _issued_count > 0 and _connected_count >= _issued_count * 0.99:
                 print(f"[接続フェーズ完了] 接続{_connected_count}台 / {_issued_count}台（99%以上）→ 送信フェーズ開始")
                 _all_connected.set()
+
+        # Locust Web UI の Statistics タブにワーカーごとの接続数を表示
+        # "# Requests" 列が接続台数のリアルタイムカウンターになる
+        offset = os.getenv("DEVICE_ID_OFFSET", "1")
+        self.environment.events.request.fire(
+            request_type="接続",
+            name=f"MQTT接続 [offset={offset}]",
+            response_time=0,
+            response_length=0,
+            exception=None,
+            context=self.context(),
+        )
 
         # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
         # keepalive=1740秒なので60秒に1回loopすれば十分（余裕を持って29回分）
