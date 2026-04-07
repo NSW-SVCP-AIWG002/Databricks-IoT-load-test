@@ -235,9 +235,9 @@ class MqttDeviceUser(User):
         )
 
         # 接続タイミングを分散（0〜120秒のランダム待機）
-        time.sleep(random.uniform(0, 120))
+        time.sleep(random.uniform(0, 300))
 
-        connack_timeout = 60
+        connack_timeout = 120
         retry_wait_base = 30  # 失敗後のリトライ基準待機時間
         attempt = 0
         while True:
@@ -275,6 +275,9 @@ class MqttDeviceUser(User):
                 print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait:.0f}秒後に再試行")
                 time.sleep(retry_wait)
 
+        # バックグラウンドループ開始（TCP接続維持・PINGREQ送信・切断検知）
+        self._mqtt.loop_start()
+
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
 
@@ -288,6 +291,7 @@ class MqttDeviceUser(User):
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
+            self._mqtt.loop_stop()
             self._mqtt.disconnect()
             print(f"[MQTT] 切断 device={self.device_name}")
 
@@ -305,8 +309,7 @@ class MqttDeviceUser(User):
                     self._mqtt.reconnect()
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
-                        self._mqtt.loop(timeout=0.1)
-                        time.sleep(5.0)
+                        time.sleep(1.0)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
@@ -328,7 +331,8 @@ class MqttDeviceUser(User):
         start = time.perf_counter()
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
-            self._mqtt.loop(timeout=0.1)
+            # loop_start()のバックグラウンドループが送信を処理する
+            time.sleep(0.2)
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             self.environment.events.request.fire(
