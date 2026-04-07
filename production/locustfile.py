@@ -76,6 +76,10 @@ _failed_count = 0
 _issued_count = 0   # credential を取得したユーザー数
 _connected_count_lock = threading.Lock()
 
+# 送信開始閾値: この台数が接続完了してから send_telemetry を開始する
+_SEND_START_THRESHOLD = int(os.getenv("SEND_START_THRESHOLD", "15000"))
+_send_ready = threading.Event()  # 閾値到達で set()
+
 
 def _load_credentials(offset: int, count: int) -> list[dict]:
     """
@@ -203,8 +207,29 @@ class MqttDeviceUser(User):
       DEVICE_CREDENTIALS_FILE   - デバイス認証情報 CSV パス（デフォルト: device_credentials.csv）
     """
 
-    # 送信間隔に分散を持たせる（240〜360秒 = 4〜6分）
-    wait_time = between(240, 360)
+    # 送信間隔（60〜120秒）: AzureTCPアイドルタイムアウト（4分）以内に送信して接続維持
+    wait_time = between(60, 120)
+
+    def _on_connect(self, client, userdata, flags, rc):
+        """CONNACK受信コールバック"""
+        if rc == 0:
+            self._connect_event.set()
+        else:
+            self._connect_rc = rc
+            self._connect_event.set()
+
+    def _on_disconnect(self, client, userdata, rc):
+        """切断コールバック: 予期しない切断をLocust Web UIに報告"""
+        if rc != 0:
+            print(f"[MQTT] 予期しない切断 device={self.device_name} rc={rc}")
+            self.environment.events.request.fire(
+                request_type="MQTT",
+                name="disconnect",
+                response_time=0,
+                response_length=0,
+                exception=Exception(f"unexpected disconnect rc={rc}"),
+                context=self.context(),
+            )
 
     def on_start(self):
         _registration_done.wait()  # 認証情報読込完了まで待機
@@ -243,11 +268,15 @@ class MqttDeviceUser(User):
         while True:
             attempt += 1
             # 再試行のたびにクライアントを再作成（状態リセット）
+            self._connect_event = threading.Event()
+            self._connect_rc = 0
             self._mqtt = mqtt.Client(
                 client_id=self.device_name,
                 protocol=mqtt.MQTTv311,
                 transport="tcp",
             )
+            self._mqtt.on_connect = self._on_connect
+            self._mqtt.on_disconnect = self._on_disconnect
             self._mqtt.username_pw_set(
                 username=f"{iothub_hostname}/{self.device_name}/?api-version=2021-04-12",
                 password=sas_token,
@@ -258,25 +287,24 @@ class MqttDeviceUser(User):
             )
             self._mqtt._connect_timeout = 30
             try:
-                self._mqtt.connect(iothub_hostname, port=8883, keepalive=1740)
+                self._connect_event.clear()
+                self._mqtt.connect(iothub_hostname, port=8883, keepalive=60)
+                self._mqtt.loop_start()
+                connected = self._connect_event.wait(timeout=connack_timeout)
 
-                connack_start = time.time()
-                while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
-                    self._mqtt.loop(timeout=0.1)
-                    time.sleep(10.0)
-
-                if not self._mqtt.is_connected():
-                    raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
+                if not connected or self._connect_rc != 0:
+                    self._mqtt.loop_stop()
+                    raise RuntimeError(
+                        f"CONNACK タイムアウトまたは失敗 rc={self._connect_rc}"
+                    )
 
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
                 break
             except Exception as e:
+                self._mqtt.loop_stop()
                 retry_wait = random.uniform(retry_wait_base, retry_wait_base * 3)
                 print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait:.0f}秒後に再試行")
                 time.sleep(retry_wait)
-
-        # バックグラウンドループ開始（TCP接続維持・PINGREQ送信・切断検知）
-        self._mqtt.loop_start()
 
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
@@ -285,6 +313,9 @@ class MqttDeviceUser(User):
         with _connected_count_lock:
             _connected_count += 1
             print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_issued_count}台")
+            if _connected_count >= _SEND_START_THRESHOLD and not _send_ready.is_set():
+                _send_ready.set()
+                print(f"[送信開始] {_connected_count}台接続完了 → テレメトリ送信を開始します")
 
         # 送信開始タイミングを分散（一斉送信を防ぐ）
         time.sleep(random.uniform(0, 60))
@@ -297,6 +328,9 @@ class MqttDeviceUser(User):
 
     @task
     def send_telemetry(self):
+        # 15,000台接続完了まで送信を待機
+        _send_ready.wait()
+
         body = json.dumps(_make_telemetry(self.device_id)).encode("utf-8")
 
         # 接続が切れている場合は再接続を試みる
