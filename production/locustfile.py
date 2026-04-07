@@ -283,17 +283,6 @@ class MqttDeviceUser(User):
             _connected_count += 1
             print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_issued_count}台")
 
-        # Locust Web UI の Statistics タブにワーカーごとの接続数を表示
-        offset = os.getenv("DEVICE_ID_OFFSET", "1")
-        self.environment.events.request.fire(
-            request_type="接続",
-            name=f"MQTT接続 [offset={offset}]",
-            response_time=0,
-            response_length=0,
-            exception=None,
-            context=self.context(),
-        )
-
         # 送信開始タイミングを分散（一斉送信を防ぐ）
         time.sleep(random.uniform(0, 60))
 
