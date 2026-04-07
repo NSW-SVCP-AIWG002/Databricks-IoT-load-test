@@ -71,10 +71,9 @@ _CREDS_FILE = os.getenv("DEVICE_CREDENTIALS_FILE", "device_credentials.csv")
 # デバイス認証情報 dict を格納: {device_name, device_id, primary_key}
 _credential_queue: queue.Queue = queue.Queue()
 _registration_done = threading.Event()  # 読込完了まで on_start をブロック
-_all_connected = threading.Event()      # 全デバイス接続完了まで送信をブロック
 _connected_count = 0
 _failed_count = 0
-_issued_count = 0   # credential を取得したユーザー数（スポーン完了後に確定）
+_issued_count = 0   # credential を取得したユーザー数
 _connected_count_lock = threading.Lock()
 
 
@@ -279,16 +278,12 @@ class MqttDeviceUser(User):
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
 
-        # 接続完了カウントを更新し、全台完了で送信フェーズを解放
+        # 接続完了カウントを更新
         with _connected_count_lock:
             _connected_count += 1
             print(f"[接続完了] {self.device_name} 接続済み: {_connected_count}台 / {_issued_count}台")
-            if _issued_count > 0 and _connected_count >= _issued_count * 0.99:
-                print(f"[接続フェーズ完了] 接続{_connected_count}台 / {_issued_count}台（99%以上）→ 送信フェーズ開始")
-                _all_connected.set()
 
         # Locust Web UI の Statistics タブにワーカーごとの接続数を表示
-        # "# Requests" 列が接続台数のリアルタイムカウンターになる
         offset = os.getenv("DEVICE_ID_OFFSET", "1")
         self.environment.events.request.fire(
             request_type="接続",
@@ -299,31 +294,7 @@ class MqttDeviceUser(User):
             context=self.context(),
         )
 
-        # 全デバイス接続完了まで待機（MQTT keepaliveを維持しながら待機）
-        # keepalive=1740秒なので60秒に1回loopすれば十分（余裕を持って29回分）
-        # 待機中に切断された場合は再接続を試みる（ジッター付き）
-        wait_start = time.time()
-        while not _all_connected.is_set() and time.time() - wait_start < 3600:
-            self._mqtt.loop(timeout=0.1)
-            if not self._mqtt.is_connected():
-                print(f"[MQTT] 待機中に切断 device={self.device_name} → 再接続試行")
-                # 再接続を分散させるためランダム待機（TLSハンドシェイクの集中を防ぐ）
-                time.sleep(random.uniform(0, 60))
-                try:
-                    self._mqtt.reconnect()
-                    reconnack_start = time.time()
-                    while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
-                        self._mqtt.loop(timeout=0.1)
-                        time.sleep(5.0)
-                    if self._mqtt.is_connected():
-                        print(f"[MQTT] 待機中再接続成功 device={self.device_name}")
-                    else:
-                        print(f"[MQTT] 待機中再接続失敗 device={self.device_name}")
-                except Exception as e:
-                    print(f"[MQTT] 待機中再接続エラー device={self.device_name}: {e}")
-            time.sleep(60.0)
-
-        # 送信開始タイミングを分散（全台が同時にsend_telemetryを呼ぶのを防ぐ）
+        # 送信開始タイミングを分散（一斉送信を防ぐ）
         time.sleep(random.uniform(0, 60))
 
     def on_stop(self):
