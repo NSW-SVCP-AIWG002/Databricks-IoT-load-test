@@ -260,7 +260,7 @@ class MqttDeviceUser(User):
         time.sleep(random.uniform(0, 600))
 
         connack_timeout = 300
-        retry_wait_base = 120  # 失敗後のリトライ基準待機時間
+        retry_wait_base = 300  # 失敗後のリトライ基準待機時間（リトライストーム防止）
         attempt = 0
         while True:
             attempt += 1
