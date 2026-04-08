@@ -77,7 +77,7 @@ _issued_count = 0   # credential を取得したユーザー数
 _connected_count_lock = threading.Lock()
 
 # 送信開始閾値: この台数が接続完了してから send_telemetry を開始する
-_SEND_START_THRESHOLD = int(os.getenv("SEND_START_THRESHOLD", "15000"))
+_SEND_START_THRESHOLD = int(os.getenv("SEND_START_THRESHOLD", "18000"))
 _send_ready = threading.Event()  # 閾値到達で set()
 
 

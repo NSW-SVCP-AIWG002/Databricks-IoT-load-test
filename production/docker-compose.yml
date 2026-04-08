@@ -1,19 +1,19 @@
 version: "3.9"
 
 # -------------------------------------------------------
-# Locust 分散負荷テスト構成（20,000台構成）
+# Locust 分散負荷テスト構成（20,800台構成）
 #
 # 構成:
 #   master      : Web UI / ワーカー統括（CPU 8コア）
-#   worker-1a/b : device_id     1〜 1250 /  1251〜 2500
-#   worker-2a/b : device_id  2501〜 3750 /  3751〜 5000
-#   worker-3a/b : device_id  5001〜 6250 /  6251〜 7500
-#   worker-4a/b : device_id  7501〜 8750 /  8751〜10000
-#   worker-5a/b : device_id 10001〜11250 / 11251〜12500
-#   worker-6a/b : device_id 12501〜13750 / 13751〜15000
-#   worker-7a/b : device_id 15001〜16250 / 16251〜17500
-#   worker-8a/b : device_id 17501〜18750 / 18751〜20000
-#   合計        : IoT 20,000台（1250台 × 16 worker）
+#   worker-1a/b : device_id     1〜 1300 /  1301〜 2600
+#   worker-2a/b : device_id  2601〜 3900 /  3901〜 5200
+#   worker-3a/b : device_id  5201〜 6500 /  6501〜 7800
+#   worker-4a/b : device_id  7801〜 9100 /  9101〜10400
+#   worker-5a/b : device_id 10401〜11700 / 11701〜13000
+#   worker-6a/b : device_id 13001〜14300 / 14301〜15600
+#   worker-7a/b : device_id 15601〜16900 / 16901〜18200
+#   worker-8a/b : device_id 18201〜19500 / 19501〜20800
+#   合計        : IoT 20,800台（1300台 × 16 worker）
 #
 # VM 構成:
 #   locust-master    (10.10.1.4)  : master のみ起動（8 CPU）
@@ -27,9 +27,9 @@ version: "3.9"
 #   locust-worker-8  (10.10.1.12) : worker-8a, worker-8b を起動
 #
 # 理由:
+#   接続断を考慮して各ワーカーに余裕を持たせ、20,800台で検証する。
 #   Python GIL により 1プロセス = 1コアしか使えない。
 #   1VMに2コンテナ起動することで2プロセス = 2コア利用可能になる。
-#   ワーカーVM数を8台に増やすことで1ワーカーあたりの負荷を1250台に軽減。
 #
 # 起動:
 #   Master VM    : docker-compose up --build -d master
@@ -42,8 +42,8 @@ version: "3.9"
 #   Worker VM7   : docker-compose up --build -d worker-7a worker-7b
 #   Worker VM8   : docker-compose up --build -d worker-8a worker-8b
 #   → ブラウザで http://localhost:8089 を開き
-#     Users=20001, Spawn rate=20 でテスト開始
-#     (MqttDeviceUser×20000 + EventHubConsumerUser×1)
+#     Users=20801, Spawn rate=20 でテスト開始
+#     (MqttDeviceUser×20800 + EventHubConsumerUser×1)
 #
 # 停止:
 #   docker-compose down
@@ -60,7 +60,7 @@ x-worker-base: &worker-base
   env_file:
     - .env
   environment:
-    DEVICE_COUNT: 1250
+    DEVICE_COUNT: 1300
   command:
     - --worker
     - --master-host=${MASTER_HOST:-master}
@@ -107,113 +107,113 @@ services:
     <<: *worker-base
     container_name: locust-worker-1a
     environment:
-      DEVICE_COUNT: 1250
+      DEVICE_COUNT: 1300
       DEVICE_ID_OFFSET: 1
 
   worker-1b:
     <<: *worker-base
     container_name: locust-worker-1b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 1251
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 1301
 
   worker-2a:
     <<: *worker-base
     container_name: locust-worker-2a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 2501
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 2601
 
   worker-2b:
     <<: *worker-base
     container_name: locust-worker-2b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 3751
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 3901
 
   worker-3a:
     <<: *worker-base
     container_name: locust-worker-3a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 5001
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 5201
 
   worker-3b:
     <<: *worker-base
     container_name: locust-worker-3b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 6251
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 6501
 
   worker-4a:
     <<: *worker-base
     container_name: locust-worker-4a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 7501
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 7801
 
   worker-4b:
     <<: *worker-base
     container_name: locust-worker-4b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 8751
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 9101
 
   worker-5a:
     <<: *worker-base
     container_name: locust-worker-5a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 10001
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 10401
 
   worker-5b:
     <<: *worker-base
     container_name: locust-worker-5b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 11251
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 11701
 
   worker-6a:
     <<: *worker-base
     container_name: locust-worker-6a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 12501
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 13001
 
   worker-6b:
     <<: *worker-base
     container_name: locust-worker-6b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 13751
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 14301
 
   worker-7a:
     <<: *worker-base
     container_name: locust-worker-7a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 15001
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 15601
 
   worker-7b:
     <<: *worker-base
     container_name: locust-worker-7b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 16251
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 16901
 
   worker-8a:
     <<: *worker-base
     container_name: locust-worker-8a
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 17501
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 18201
 
   worker-8b:
     <<: *worker-base
     container_name: locust-worker-8b
     environment:
-      DEVICE_COUNT: 1250
-      DEVICE_ID_OFFSET: 18751
+      DEVICE_COUNT: 1300
+      DEVICE_ID_OFFSET: 19501
 
 networks:
   locust-net:
