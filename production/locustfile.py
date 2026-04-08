@@ -52,6 +52,7 @@ import urllib.parse
 import uuid
 from datetime import datetime, timezone
 
+import gevent
 import paho.mqtt.client as mqtt
 from azure.eventhub import EventHubConsumerClient
 from azure.identity import ClientSecretCredential
@@ -76,8 +77,11 @@ _failed_count = 0
 _issued_count = 0   # credential を取得したユーザー数
 _connected_count_lock = threading.Lock()
 
-# 送信開始閾値: この台数が接続完了してから send_telemetry を開始する
-_SEND_START_THRESHOLD = int(os.getenv("SEND_START_THRESHOLD", "18000"))
+# 送信開始閾値: このワーカーの DEVICE_COUNT の 80% が接続完了したら送信開始
+# 分散モードでは各ワーカーが独立したプロセスのため、ワーカー単位で閾値を設定する
+_device_count_for_threshold = int(os.getenv("DEVICE_COUNT", "1300"))
+_SEND_START_THRESHOLD = int(os.getenv("SEND_START_THRESHOLD",
+                            str(int(_device_count_for_threshold * 0.8))))
 _send_ready = threading.Event()  # 閾値到達で set()
 
 
@@ -210,6 +214,12 @@ class MqttDeviceUser(User):
     # 送信間隔（60〜120秒）: AzureTCPアイドルタイムアウト（4分）以内に送信して接続維持
     wait_time = between(60, 120)
 
+    def _run_mqtt_loop(self):
+        """gevent greenlet でMQTTネットワークI/Oを処理する（loop_start()の代替）"""
+        while self._mqtt_running:
+            self._mqtt.loop(timeout=0.1)
+            gevent.sleep(0.05)
+
     def _on_connect(self, client, userdata, flags, rc):
         """CONNACK受信コールバック"""
         if rc == 0:
@@ -259,8 +269,8 @@ class MqttDeviceUser(User):
             iothub_hostname, self.device_name, self._primary_key, expiry_secs=86400
         )
 
-        # 接続タイミングを分散（0〜1200秒のランダム待機）
-        time.sleep(random.uniform(0, 1200))
+        # 接続タイミングを分散（0〜600秒のランダム待機）S2×10で十分な分散
+        time.sleep(random.uniform(0, 600))
 
         connack_timeout = 300
         retry_wait_base = 120  # 失敗後のリトライ基準待機時間
@@ -288,12 +298,19 @@ class MqttDeviceUser(User):
             self._mqtt._connect_timeout = 30
             try:
                 self._connect_event.clear()
+                self._mqtt_running = True
                 self._mqtt.connect(iothub_hostname, port=8883, keepalive=60)
-                self._mqtt.loop_start()
-                connected = self._connect_event.wait(timeout=connack_timeout)
+                # gevent greenlet でMQTTループを開始（loop_start()の代替）
+                self._mqtt_greenlet = gevent.spawn(self._run_mqtt_loop)
 
-                if not connected or self._connect_rc != 0:
-                    self._mqtt.loop_stop()
+                # CONNACKをgevent互換で待機
+                connack_start = time.time()
+                while not self._connect_event.is_set() and time.time() - connack_start < connack_timeout:
+                    gevent.sleep(0.5)
+
+                if not self._connect_event.is_set() or self._connect_rc != 0:
+                    self._mqtt_running = False
+                    self._mqtt_greenlet.kill()
                     raise RuntimeError(
                         f"CONNACK タイムアウトまたは失敗 rc={self._connect_rc}"
                     )
@@ -301,10 +318,12 @@ class MqttDeviceUser(User):
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
                 break
             except Exception as e:
-                self._mqtt.loop_stop()
+                self._mqtt_running = False
+                if hasattr(self, "_mqtt_greenlet"):
+                    self._mqtt_greenlet.kill()
                 retry_wait = random.uniform(retry_wait_base, retry_wait_base * 3)
                 print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait:.0f}秒後に再試行")
-                time.sleep(retry_wait)
+                gevent.sleep(retry_wait)
 
         # デバイス-to-クラウド メッセージトピック
         self._topic = f"devices/{self.device_name}/messages/events/"
@@ -322,7 +341,9 @@ class MqttDeviceUser(User):
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
-            self._mqtt.loop_stop()
+            self._mqtt_running = False
+            if hasattr(self, "_mqtt_greenlet"):
+                self._mqtt_greenlet.kill()
             self._mqtt.disconnect()
             print(f"[MQTT] 切断 device={self.device_name}")
 
@@ -337,13 +358,13 @@ class MqttDeviceUser(User):
         if not self._mqtt.is_connected():
             print(f"[MQTT] 切断検知 device={self.device_name} → 再接続試行")
             # 再接続を分散（TLSハンドシェイクの集中を防ぐ）
-            time.sleep(random.uniform(0, 30))
+            gevent.sleep(random.uniform(0, 30))
             for retry in range(1, 6):
                 try:
                     self._mqtt.reconnect()
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
-                        time.sleep(1.0)
+                        gevent.sleep(1.0)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
                     print(f"[MQTT] 再接続成功 device={self.device_name} attempt={retry}")
@@ -360,13 +381,13 @@ class MqttDeviceUser(User):
                             context=self.context(),
                         )
                         return
-                    time.sleep(5 * retry)
+                    gevent.sleep(5 * retry)
 
         start = time.perf_counter()
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
-            # loop_start()のバックグラウンドループが送信を処理する
-            time.sleep(0.2)
+            # greenletがMQTTループを処理する
+            gevent.sleep(0.2)
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             self.environment.events.request.fire(
