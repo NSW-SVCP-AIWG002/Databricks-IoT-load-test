@@ -259,11 +259,11 @@ class MqttDeviceUser(User):
             iothub_hostname, self.device_name, self._primary_key, expiry_secs=86400
         )
 
-        # 接続タイミングを分散（0〜120秒のランダム待機）
-        time.sleep(random.uniform(0, 300))
+        # 接続タイミングを分散（0〜1200秒のランダム待機）
+        time.sleep(random.uniform(0, 1200))
 
         connack_timeout = 300
-        retry_wait_base = 60  # 失敗後のリトライ基準待機時間
+        retry_wait_base = 120  # 失敗後のリトライ基準待機時間
         attempt = 0
         while True:
             attempt += 1
