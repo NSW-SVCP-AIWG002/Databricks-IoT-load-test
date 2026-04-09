@@ -276,18 +276,23 @@ class MqttDeviceUser(User):
                 # keepalive=180: wait_time最大(120秒)より長く、Azure TCP制限(4分)より短い
                 self._mqtt.connect(iothub_hostname, port=8883, keepalive=180)
 
-                # CONNACKをloop()ポーリングで待機（geventと互換性のある方式）
+                # バックグラウンドスレッドでMQTT I/Oを処理（参考資料と同方式）
+                # loop_start()がCONNACK受信・keepalive送信・パケット処理を担当
+                self._mqtt.loop_start()
+
+                # CONNACKをsleepで待機（loop_start()が処理するのでloop()呼び出し不要）
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
-                    self._mqtt.loop(timeout=0.1)
                     time.sleep(1.0)
 
                 if not self._mqtt.is_connected():
+                    self._mqtt.loop_stop()
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
 
                 print(f"[MQTT] 接続完了 device={self.device_name} (device_id={self.device_id}) attempt={attempt}")
                 break
             except Exception as e:
+                self._mqtt.loop_stop()
                 retry_wait = random.uniform(retry_wait_base, retry_wait_base * 3)
                 print(f"[MQTT] 接続失敗 device={self.device_name} attempt={attempt}: {e} → {retry_wait:.0f}秒後に再試行")
                 time.sleep(retry_wait)
@@ -305,6 +310,7 @@ class MqttDeviceUser(User):
 
     def on_stop(self):
         if hasattr(self, "_mqtt"):
+            self._mqtt.loop_stop()
             self._mqtt.disconnect()
             print(f"[MQTT] 切断 device={self.device_name}")
 
@@ -320,9 +326,9 @@ class MqttDeviceUser(User):
             for retry in range(1, 6):
                 try:
                     self._mqtt.reconnect()
+                    # loop_start()はすでに起動中のためそのまま待機
                     reconnack_start = time.time()
                     while not self._mqtt.is_connected() and time.time() - reconnack_start < 30:
-                        self._mqtt.loop(timeout=0.1)
                         time.sleep(1.0)
                     if not self._mqtt.is_connected():
                         raise RuntimeError("再接続 CONNACK タイムアウト")
@@ -345,7 +351,7 @@ class MqttDeviceUser(User):
         start = time.perf_counter()
         try:
             self._mqtt.publish(self._topic, payload=body, qos=0)
-            self._mqtt.loop(timeout=0.1)  # パケットを即時送信
+            # loop_start()がバックグラウンドで処理するのでloop()呼び出し不要
             elapsed_ms = int((time.perf_counter() - start) * 1000)
 
             self.environment.events.request.fire(
