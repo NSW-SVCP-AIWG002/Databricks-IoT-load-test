@@ -279,8 +279,8 @@ class MqttDeviceUser(User):
                 # CONNACKをloop()ポーリングで待機（geventと互換性のある方式）
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
-                    self._mqtt.loop(timeout=0.01)  # 0.1秒 → 0.01秒（greenletあたりのCPU占有を削減）
-                    time.sleep(0.1)                # 1.0秒 → 0.1秒（greenlet切り替えを高頻度化）
+                    self._mqtt.loop(timeout=0.1)
+                    time.sleep(1.0)
 
                 if not self._mqtt.is_connected():
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
