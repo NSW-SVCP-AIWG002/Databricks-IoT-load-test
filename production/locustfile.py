@@ -251,7 +251,7 @@ class MqttDeviceUser(User):
         # 接続タイミングを分散（0〜600秒のランダム待機
         time.sleep(random.uniform(0, 120))
 
-        connack_timeout = 60
+        connack_timeout = 300  # 60秒 → 300秒（gevent過負荷時のCONNACK処理時間を確保）
         retry_wait_base = 30  # 失敗後のリトライ基準待機時間（リトライストーム防止）
         attempt = 0
         while True:
@@ -279,8 +279,8 @@ class MqttDeviceUser(User):
                 # CONNACKをloop()ポーリングで待機（geventと互換性のある方式）
                 connack_start = time.time()
                 while not self._mqtt.is_connected() and time.time() - connack_start < connack_timeout:
-                    self._mqtt.loop(timeout=0.1)
-                    time.sleep(1.0)
+                    self._mqtt.loop(timeout=0.01)  # 0.1秒 → 0.01秒（greenletあたりのCPU占有を削減）
+                    time.sleep(0.1)                # 1.0秒 → 0.1秒（greenlet切り替えを高頻度化）
 
                 if not self._mqtt.is_connected():
                     raise RuntimeError(f"CONNACK タイムアウト（{connack_timeout}秒）")
