@@ -95,7 +95,6 @@ services:
       - locustfile.py
       - --csv=output/locust_statistics
       - --logfile=output/locust.log
-      - --heartbeat-liveness=10
       - --expect-workers=16
     volumes:
       - ./device_credentials.csv:/loadtest/device_credentials.csv:ro
