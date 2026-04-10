@@ -96,6 +96,7 @@ services:
       - --csv=output/locust_statistics
       - --logfile=output/locust.log
       - --expect-workers=16
+      - --heartbeat-liveness=10
     volumes:
       - ./device_credentials.csv:/loadtest/device_credentials.csv:ro
       - ./output:/loadtest/output
