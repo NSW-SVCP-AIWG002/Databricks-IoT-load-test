@@ -537,11 +537,13 @@ class EventHubConsumerUser(User):
             conn_str, consumer_group="$Default", **kwargs
         )
 
-        props = self.consumer.get_eventhub_properties()
-        self.partition_ids = props["partition_ids"]
+        # get_eventhub_properties() は AMQP $management エンドポイントを使用するため
+        # 環境によって認証エラーが発生する。代わりに EVENTHUB_PARTITION_COUNT から生成する。
+        partition_count = int(os.getenv("EVENTHUB_PARTITION_COUNT", "16"))
+        self.partition_ids = [str(i) for i in range(partition_count)]
         print(
-            f"[EventHub] 接続成功: name={props['eventhub_name']}, "
-            f"パーティション数={len(self.partition_ids)}"
+            f"[EventHub] 接続成功: name={eventhub_name}, "
+            f"パーティション数={partition_count}"
         )
 
         self.last_seq = {}
