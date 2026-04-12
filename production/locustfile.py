@@ -523,6 +523,12 @@ class EventHubConsumerUser(User):
     fixed_count = 1  # 常に1台のみ起動（監視用）
     wait_time = between(5, 10)
 
+    @staticmethod
+    def _in_thread(func, *args):
+        """gevent の monkey-patch 外の OS スレッドで実行し AMQP 応答の破壊を防ぐ。"""
+        import gevent
+        return gevent.get_hub().threadpool.spawn(func, *args).get()
+
     def on_start(self):
         conn_str = os.getenv("EVENTHUB_CONNECTION_STRING", "")
         if not conn_str:
@@ -537,7 +543,7 @@ class EventHubConsumerUser(User):
             conn_str, consumer_group="$Default", **kwargs
         )
 
-        props = self.consumer.get_eventhub_properties()
+        props = self._in_thread(self.consumer.get_eventhub_properties)
         self.partition_ids = props["partition_ids"]
         print(
             f"[EventHub] 接続成功: name={props['eventhub_name']}, "
@@ -546,7 +552,7 @@ class EventHubConsumerUser(User):
 
         self.last_seq = {}
         for pid in self.partition_ids:
-            pp = self.consumer.get_partition_properties(pid)
+            pp = self._in_thread(self.consumer.get_partition_properties, pid)
             self.last_seq[pid] = pp["last_enqueued_sequence_number"]
         print(f"[EventHub] 初期シーケンス番号: {self.last_seq}")
 
@@ -562,7 +568,7 @@ class EventHubConsumerUser(User):
         start = time.perf_counter()
         try:
             for pid in self.partition_ids:
-                pp = self.consumer.get_partition_properties(pid)
+                pp = self._in_thread(self.consumer.get_partition_properties, pid)
                 current_seq = pp["last_enqueued_sequence_number"]
                 delta = max(0, current_seq - self.last_seq[pid])
                 total_new += delta
