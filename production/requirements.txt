@@ -1,5 +1,5 @@
 # Load testing framework
-locust==2.24.7
+locust==2.23.1
 
 # MQTT クライアント（IoT Hub 経由送信）
 # 参考資料と同様 paho-mqtt 1.x API を使用（2.x は API 変更あり）
