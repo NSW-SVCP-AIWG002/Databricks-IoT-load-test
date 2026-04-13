@@ -319,8 +319,8 @@ class MqttDeviceUser(User):
       - keepalive=600（参考資料と同値）
     """
 
-    # 送信間隔（390〜450秒、平均7分）
-    wait_time = between(390, 450)
+    # 送信間隔（270〜330秒、平均5分）
+    wait_time = between(270, 330)
 
     def _on_disconnect(self, client, userdata, rc):
         """切断コールバック: 予期しない切断を Locust Web UI に報告"""
