@@ -389,9 +389,9 @@ class MqttDeviceUser(User):
             tls_version=ssl.PROTOCOL_TLS_CLIENT,
         )
         # __init__ で接続開始（参考資料と同方式）
-        # keepalive=600: 参考資料と同値。wait_time(max120秒)より十分長い
+        # keepalive=300: wait_time(max450秒)中に PINGREQ を送り IoT Hub の切断（keepalive*1.5=450秒）を防ぐ
         try:
-            self._mqtt.connect(iothub_hostname, port=8883, keepalive=600)
+            self._mqtt.connect(iothub_hostname, port=8883, keepalive=300)
             self._mqtt.loop_start()  # バックグラウンドスレッドで CONNACK・keepalive を処理
             print(f"[MQTT] 接続開始 device={self.device_name}")
         except Exception as e:
