@@ -13,6 +13,8 @@ builtins.spark = spark      # noqa: F821
 
 from functions.mysql_connector import get_mysql_connection
 
+from datetime import datetime
+
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     DoubleType, IntegerType, StringType, StructField, StructType,
@@ -100,10 +102,14 @@ kafka_options = {
         f'username="$ConnectionString" '
         f'password="{EVENTHUBS_CONNECTION_STRING}";'
     ),
-    # チェックポイントなし初回起動時は earliest から開始（チェックポイントがあれば自動でそこから再開）
-    "startingOffsets": "earliest",
-    # "startingOffsets": "latest",
+    # チェックポイントなし初回起動時は latest から開始（チェックポイントがあれば自動でそこから再開）
+    # "startingOffsets": "earliest",
+    "startingOffsets": "latest",
     "failOnDataLoss": "false",
+    "kafka.session.timeout.ms": "30000",       # 30秒（デフォルト600秒を短縮）
+    "kafka.heartbeat.interval.ms": "10000",    # 10秒（session.timeout の1/3以下）
+    "kafka.request.timeout.ms": "60000",       # 60秒
+    "kafka.max.poll.interval.ms": "600000",    # 10分（foreachBatch の処理時間上限）
 }
 
 # =============================================================================
@@ -175,6 +181,11 @@ def get_alert_settings():
 # foreachBatchコールバック
 # =============================================================================
 
+def _ts() -> str:
+    """現在日時を 'YYYY-MM-DD HH:MM:SS' 形式で返す"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " "
+
+
 def process_sensor_batch(batch_df, batch_id):
     """
     マイクロバッチ処理メイン（foreachBatch コールバック）
@@ -186,7 +197,7 @@ def process_sensor_batch(batch_df, batch_id):
     4. Delta Lake書込み
     5. OLTP更新（異常状態/アラート履歴/メール送信キュー/デバイスステータス）
     """
-    print(f"[BATCH {batch_id}] ===== foreachBatch 開始 =====")
+    print(f"[BATCH {batch_id}] {_ts()}===== foreachBatch 開始 =====")
 
     # Spark Connect: バッチDFからSparkSessionを取得し builtins を更新
     builtins.spark = batch_df.sparkSession
@@ -194,32 +205,32 @@ def process_sensor_batch(batch_df, batch_id):
     builtins.dbutils = _dbutils_proxy
 
     record_count = batch_df.count()
-    print(f"[BATCH {batch_id}] レコード数={record_count}")
+    print(f"[BATCH {batch_id}] {_ts()}レコード数={record_count}")
 
     if batch_df.isEmpty():
-        print(f"[BATCH {batch_id}] 空のためスキップ")
+        print(f"[BATCH {batch_id}] {_ts()}空のためスキップ")
         return
 
     # マスタデータ取得（バッチごとに最新を参照）
-    print(f"[BATCH {batch_id}] アラート設定マスタ取得開始")
+    print(f"[BATCH {batch_id}] {_ts()}アラート設定マスタ取得開始")
     alert_settings_df = get_alert_settings()
-    print(f"[BATCH {batch_id}] アラート設定マスタ取得完了: {alert_settings_df.count()}件")
+    print(f"[BATCH {batch_id}] {_ts()}アラート設定マスタ取得完了: {alert_settings_df.count()}件")
 
-    print(f"[BATCH {batch_id}] アラート異常状態取得開始")
+    print(f"[BATCH {batch_id}] {_ts()}アラート異常状態取得開始")
     alert_state_df = get_alert_abnormal_state()
-    print(f"[BATCH {batch_id}] アラート異常状態取得完了")
+    print(f"[BATCH {batch_id}] {_ts()}アラート異常状態取得完了")
 
     # STEP 4: アラート判定（閾値 + 継続時間）
-    print(f"[BATCH {batch_id}] STEP4: 閾値判定開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP4: 閾値判定開始")
     threshold_df = evaluate_threshold(batch_df, alert_settings_df)
-    print(f"[BATCH {batch_id}] STEP4: 閾値判定完了")
+    print(f"[BATCH {batch_id}] {_ts()}STEP4: 閾値判定完了")
 
-    print(f"[BATCH {batch_id}] STEP4: 継続時間判定開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP4: 継続時間判定開始")
     alert_df = check_alerts_with_duration(threshold_df, alert_state_df)
-    print(f"[BATCH {batch_id}] STEP4: 継続時間判定完了")
+    print(f"[BATCH {batch_id}] {_ts()}STEP4: 継続時間判定完了")
 
     # STEP 5a: Delta Lake書込み（センサーデータ）
-    print(f"[BATCH {batch_id}] STEP5a: Delta Lake 書込み開始 → {SILVER_TABLE}")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5a: Delta Lake 書込み開始 → {SILVER_TABLE}")
     output_df = alert_df.select(
         F.col("device_id"),
         F.col("organization_id"),
@@ -244,10 +255,10 @@ def process_sensor_batch(batch_df, batch_id):
     )
 
     output_df.write.format("delta").mode("append").saveAsTable(SILVER_TABLE)
-    print(f"[BATCH {batch_id}] STEP5a: Delta Lake 書込み完了")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5a: Delta Lake 書込み完了")
 
     # STEP 5a-2: MySQL書込み（センサーデータ）
-    print(f"[BATCH {batch_id}] STEP5a-2: MySQL用 DataFrame 生成開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: MySQL用 DataFrame 生成開始")
     mysql_df = batch_df.select(
         F.col("device_id"),
         F.col("organization_id"),
@@ -266,19 +277,19 @@ def process_sensor_batch(batch_df, batch_id):
             "defrost_heater_output_1", "defrost_heater_output_2",
         ]],
     )
-    print(f"[BATCH {batch_id}] STEP5a-2: MySQL用 DataFrame 生成完了")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: MySQL用 DataFrame 生成完了")
 
     try:
-        print(f"[BATCH {batch_id}] STEP5a-2: mysql_df.collect() 開始")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: mysql_df.collect() 開始")
         mysql_records = mysql_df.collect()
-        print(f"[BATCH {batch_id}] STEP5a-2: mysql_df.collect() 完了 → {len(mysql_records)}件")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: mysql_df.collect() 完了 → {len(mysql_records)}件")
 
         if mysql_records:
-            print(f"[BATCH {batch_id}] STEP5a-2: MySQL接続開始")
+            print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: MySQL接続開始")
             with get_mysql_connection() as conn:
-                print(f"[BATCH {batch_id}] STEP5a-2: MySQL接続成功")
+                print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: MySQL接続成功")
                 with conn.cursor() as cursor:
-                    print(f"[BATCH {batch_id}] STEP5a-2: INSERT 実行開始")
+                    print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: INSERT 実行開始")
                     cursor.executemany("""
                         INSERT INTO silver_sensor_data (
                             device_id, organization_id, event_timestamp, event_date,
@@ -317,64 +328,64 @@ def process_sensor_batch(batch_df, batch_id):
                         )
                         for r in mysql_records
                     ])
-                    print(f"[BATCH {batch_id}] STEP5a-2: INSERT 実行完了")
+                    print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: INSERT 実行完了")
                 conn.commit()
-                print(f"[BATCH {batch_id}] STEP5a-2: COMMIT 完了")
-            print(f"[BATCH {batch_id}] STEP5a-2: MySQL silver_sensor_data 書込み成功: {len(mysql_records)}行")
+                print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: COMMIT 完了")
+            print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: MySQL silver_sensor_data 書込み成功: {len(mysql_records)}行")
         else:
-            print(f"[BATCH {batch_id}] STEP5a-2: mysql_records が空のためスキップ")
+            print(f"[BATCH {batch_id}] {_ts()}STEP5a-2: mysql_records が空のためスキップ")
     except Exception as e:
         print(f"[SILVER_ERR_007] MySQLへのセンサーデータ書込みに失敗しました: {e}")
         import traceback
         print(traceback.format_exc())
 
     # STEP 5b: OLTP更新
-    print(f"[BATCH {batch_id}] STEP5b: アラート異常状態 更新開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5b: アラート異常状態 更新開始")
     try:
         update_alert_abnormal_state(alert_df, batch_id)
-        print(f"[BATCH {batch_id}] STEP5b: アラート異常状態 更新完了")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5b: アラート異常状態 更新完了")
     except Exception as e:
         print(f"[SILVER_ERR_006] アラート異常状態への書込みに失敗しました: {e}")
         import traceback
         print(traceback.format_exc())
 
-    print(f"[BATCH {batch_id}] STEP5b: アラート履歴 登録開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5b: アラート履歴 登録開始")
     try:
         insert_alert_history(alert_df, batch_id)
-        print(f"[BATCH {batch_id}] STEP5b: アラート履歴 登録完了")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5b: アラート履歴 登録完了")
     except Exception as e:
         print(f"[SILVER_ERR_004] アラート履歴の登録に失敗しました: {e}")
         import traceback
         print(traceback.format_exc())
 
-    print(f"[BATCH {batch_id}] STEP5b: アラート履歴 復旧更新開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5b: アラート履歴 復旧更新開始")
     try:
         update_alert_history_on_recovery(alert_df, batch_id)
-        print(f"[BATCH {batch_id}] STEP5b: アラート履歴 復旧更新完了")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5b: アラート履歴 復旧更新完了")
     except Exception as e:
         print(f"[SILVER_ERR_004] アラート履歴の復旧更新に失敗しました: {e}")
         import traceback
         print(traceback.format_exc())
 
-    print(f"[BATCH {batch_id}] STEP5b: メール送信キュー 登録開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5b: メール送信キュー 登録開始")
     try:
         enqueue_email_notification(alert_df, batch_id, batch_df.sparkSession)
-        print(f"[BATCH {batch_id}] STEP5b: メール送信キュー 登録完了")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5b: メール送信キュー 登録完了")
     except Exception as e:
         print(f"[SILVER_ERR_003] メール送信キューへの書込みに失敗しました: {e}")
         import traceback
         print(traceback.format_exc())
 
-    print(f"[BATCH {batch_id}] STEP5b: デバイスステータス 更新開始")
+    print(f"[BATCH {batch_id}] {_ts()}STEP5b: デバイスステータス 更新開始")
     try:
         update_device_status(alert_df, batch_id)
-        print(f"[BATCH {batch_id}] STEP5b: デバイスステータス 更新完了")
+        print(f"[BATCH {batch_id}] {_ts()}STEP5b: デバイスステータス 更新完了")
     except Exception as e:
         print(f"[SILVER_ERR_005] デバイスステータスの更新に失敗しました: {e}")
         import traceback
         print(traceback.format_exc())
 
-    print(f"[BATCH {batch_id}] ===== foreachBatch 終了 =====")
+    print(f"[BATCH {batch_id}] {_ts()}===== foreachBatch 終了 =====")
 
 
 # =============================================================================
@@ -540,7 +551,7 @@ def start_pipeline():
         .writeStream
         .foreachBatch(process_sensor_batch)
         .option("checkpointLocation", CHECKPOINT_LOCATION)
-        .trigger(processingTime="2 minutes")  # 2分ごとにバッチ処理（ジョブコンピュート用・常時稼働）
+        .trigger(processingTime="10 seconds")
         .start()
     )
     print(f"[PIPELINE] クエリ起動完了: id={query.id}, runId={query.runId}")

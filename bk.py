@@ -100,10 +100,14 @@ kafka_options = {
         f'username="$ConnectionString" '
         f'password="{EVENTHUBS_CONNECTION_STRING}";'
     ),
-    # 疎通検証のため
-    # "startingOffsets": "latest",
+    # チェックポイントなし初回起動時は earliest から開始（チェックポイントがあれば自動でそこから再開）
     "startingOffsets": "earliest",
+    # "startingOffsets": "latest",
     "failOnDataLoss": "false",
+    "kafka.session.timeout.ms": "30000",       # 30秒（デフォルト600秒を短縮）
+    "kafka.heartbeat.interval.ms": "10000",    # 10秒（session.timeout の1/3以下）
+    "kafka.request.timeout.ms": "60000",       # 60秒
+    "kafka.max.poll.interval.ms": "600000",    # 10分（foreachBatch の処理時間上限）
 }
 
 # =============================================================================
@@ -154,8 +158,13 @@ def _jdbc_options(table: str) -> dict:
 
 
 def get_device_master():
-    """デバイスマスタを取得"""
-    return spark.read.format("jdbc").options(**_jdbc_options("device_master")).load()
+    """デバイスマスタを取得（Unity Catalog）"""
+    return spark.table("iot_catalog.oltp_db.device_master")
+
+
+def get_organization_master():
+    """組織マスタを取得（Unity Catalog）"""
+    return spark.table("iot_catalog.oltp_db.organization_master")
 
 
 def get_alert_settings():
@@ -260,7 +269,6 @@ def process_sensor_batch(batch_df, batch_id):
             "fan_motor_3", "fan_motor_4", "fan_motor_5",
             "defrost_heater_output_1", "defrost_heater_output_2",
         ]],
-        F.col("raw_json").alias("sensor_data_json"),
     )
     print(f"[BATCH {batch_id}] STEP5a-2: MySQL用 DataFrame 生成完了")
 
@@ -288,13 +296,13 @@ def process_sensor_batch(batch_df, batch_id):
                             compressor_freezer_2, fan_motor_1, fan_motor_2,
                             fan_motor_3, fan_motor_4, fan_motor_5,
                             defrost_heater_output_1, defrost_heater_output_2,
-                            sensor_data_json, create_time
+                            create_time
                         ) VALUES (
                             %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, NOW(6)
+                            %s, %s, NOW(6)
                         )
                     """, [
                         (
@@ -310,7 +318,6 @@ def process_sensor_batch(batch_df, batch_id):
                             r["compressor_freezer_2"], r["fan_motor_1"], r["fan_motor_2"],
                             r["fan_motor_3"], r["fan_motor_4"], r["fan_motor_5"],
                             r["defrost_heater_output_1"], r["defrost_heater_output_2"],
-                            r["sensor_data_json"],
                         )
                         for r in mysql_records
                     ])
@@ -455,6 +462,13 @@ def build_kafka_stream():
 
         # STEP 3: デバイスマスタ結合（organization_id付与）
         .join(F.broadcast(get_device_master()), "device_id", "left")
+
+        # STEP 3.5: 組織マスタ存在チェック（organization_idが存在しないレコードは除外）
+        .join(
+            F.broadcast(get_organization_master().select("organization_id")),
+            "organization_id",
+            "inner",
+        )
     )
 
 
@@ -465,7 +479,9 @@ def diagnose_kafka_stream():
     """
     print("[DIAGNOSE] ===== Kafka診断開始 =====")
 
-    raw_df = spark.read.format("kafka").options(**kafka_options).load()
+    # バッチ読み込みは "latest" 不可のため "earliest" に上書き
+    batch_kafka_options = {**kafka_options, "startingOffsets": "earliest"}
+    raw_df = spark.read.format("kafka").options(**batch_kafka_options).load()
     print(f"[DIAGNOSE] STEP1 Raw Kafka: {raw_df.count()}件")
 
     s1 = raw_df.select(
@@ -528,7 +544,7 @@ def start_pipeline():
         .writeStream
         .foreachBatch(process_sensor_batch)
         .option("checkpointLocation", CHECKPOINT_LOCATION)
-        .trigger(once=True)
+        .trigger(processingTime="10 seconds")
         .start()
     )
     print(f"[PIPELINE] クエリ起動完了: id={query.id}, runId={query.runId}")
@@ -605,6 +621,11 @@ def run_batch_test():
             F.col("raw_json"),
         )
         .join(F.broadcast(get_device_master()), "device_id", "left")
+        .join(
+            F.broadcast(get_organization_master().select("organization_id")),
+            "organization_id",
+            "inner",
+        )
     )
 
     print(f"[BATCH_TEST] 変換後件数: {batch_df.count()}件")
@@ -635,4 +656,4 @@ def run_batch_test():
 # =============================================================================
 
 if __name__ == "__main__":
-    run_batch_test()
+    start_pipeline()  # 常駐ストリーミングとして起動（Databricks Job 用）
